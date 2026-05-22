@@ -7,7 +7,7 @@ These steps below will teach me how to use git commands
 How to add my changes to reposiory:
 
     git add . # adds all the changes to staging area, ready to be commited
-    git commit "note changes to code" # commits the changes to local repository with a note about the changes made
+    git commit -m "note changes to code" # commits the changes to local repository with a note about the changes made
     git push # pushes the changes to remote repository,
 
 Now code will be sent to the repository
