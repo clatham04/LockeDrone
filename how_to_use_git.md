@@ -12,10 +12,8 @@ git push # pushes the changes to remote repository,
 
 Now code will be sent to the repository
 
-
 ## How to pull the changes made to code
 
 How to pull changes from repository:
 
 git pull # pulls the changes from repository to my local code
-
