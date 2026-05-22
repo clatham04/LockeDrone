@@ -1,11 +1,6 @@
 import cv2
+import numpy as np
 
-# Load the Haar Cascade face detector included with OpenCV
-face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-)
-
-# Open the default webcam
 cap = cv2.VideoCapture(0)
 
 if not cap.isOpened():
@@ -15,41 +10,59 @@ if not cap.isOpened():
 print("Press 'q' to quit.")
 
 while True:
-    # Read frame from camera
     ret, frame = cap.read()
 
     if not ret:
         print("Error: Failed to capture frame.")
         break
 
-    # Convert frame to grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # Convert frame to HSV — better for color detection than BGR
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Detect faces
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30)
-    )
+    # Define blue color range in HSV
+    lower_blue = np.array([100, 150, 50])
+    upper_blue = np.array([130, 255, 255])
 
-    # Draw rectangle around each detected face
-    for (x, y, w, h) in faces:
-        cv2.rectangle(
-            frame,
-            (x, y),
-            (x + w, y + h),
-            (0, 255, 0),
-            2
-        )
+    # Create a mask that isolates blue pixels
+    mask = cv2.inRange(hsv, lower_blue, upper_blue)
 
-    # Display the output
-    cv2.imshow("Face Detection", frame)
+    # Clean up the mask with morphological operations
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.erode(mask, kernel, iterations=1)
+    mask = cv2.dilate(mask, kernel, iterations=2)
 
-    # Exit when 'q' is pressed
+    # Find contours of detected blue regions
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if contours:
+        # Track the largest blue contour
+        largest = max(contours, key=cv2.contourArea)
+
+        if cv2.contourArea(largest) > 500:  # Ignore tiny blobs
+            x, y, w, h = cv2.boundingRect(largest)
+
+            # Draw bounding box
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+            # Draw centroid
+            cx, cy = x + w // 2, y + h // 2
+            cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
+
+            # Label with position info
+            cv2.putText(
+                frame,
+                f"Blue Object ({cx}, {cy})",
+                (x, y - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2
+            )
+
+    cv2.imshow("Blue Object Tracking", frame)
+
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# Cleanup
 cap.release()
 cv2.destroyAllWindows()
