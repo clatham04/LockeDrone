@@ -1,229 +1,116 @@
-# Locke Drone — Human Tracker
-> `src/vision/human_detector.py`
+### main_test.py markdown file ###
+
+
+# Locke Drone System Architecture Documentation
+
+This document provides a technical breakdown of the modular computer vision suite driving the **Locke Drone** project. The software is split into separate, specialized modules to maximize processing efficiency, decouple visual calculations from hardware constraints, and prepare the system for upstream integration with flight controllers.
 
 ---
 
-## What the code does in one sentence
+## Architecture Overview
 
-It watches the webcam, finds a person using HOG detection, then hands off to a CSRT tracker that follows them frame-by-frame — without ever letting detection slow down the camera loop.
+The system is split into four distinct files that work in an orchestration chain. By uncoupling frame grabbing from model inference, the script achieves zero I/O blocking, optimizing the frame processing pipeline for real-time edge processing.
+
+```
+                  ┌──────────────────────┐
+                  │   BackgroundCamera   │  <--- Continuous non-blocking 
+                  │     (camera.py)      │       hardware capture loop
+                  └──────────┬───────────┘
+                             │ (Latest Frame)
+                             ▼
+                  ┌──────────────────────┐
+                  │      main_test.py    │  <--- Orchestration Hub
+                  └────┬────────────┬────┘       & UI Rendering
+                       │            │
+  (Inference Requests) │            │ (Bounding Box Specs)
+                       ▼            ▼
+ ┌──────────────────────┐  ┌──────────────────────┐
+ │     HumanDetector    │  │ TelemetryCalculator  │
+ │     (detector.py)    │  │    (telemetry.py)    │
+ └──────────────────────┘  └──────────────────────┘
+  Runs YOLOv11 on GPU       Computes physical human
+  to isolate target info    & altitude ranges
+
+```
 
 ---
 
-## Imports
+## 1. `camera.py` (Asynchronous Video Processing)
 
-```python
-import cv2
-import time
-import threading
-```
+### Purpose
 
-| Import | Why it's needed |
-|---|---|
-| `cv2` | OpenCV — camera, HOG detector, CSRT tracker, drawing |
-| `time` | `perf_counter()` for precise FPS measurement |
-| `threading` | Runs HOG in the background so it doesn't freeze the frame loop |
+Standard opencv camera reads (`cv2.VideoCapture().read()`) are blocking operations. The main script must pause and wait for the webcam hardware to physically register a frame, trapping your execution loop at the camera's baseline capture capability (typically 30 FPS).
 
----
+`camera.py` fixes this by pushing the camera pipeline into a dedicated background execution thread using Python's `threading` and `lock` primitives.
 
-## Part 1 — HOG People Detector
+### Code Mechanics
 
-```python
-hog = cv2.HOGDescriptor()
-hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-```
-
-**HOG** (Histogram of Oriented Gradients) detects humans by analysing edge patterns across a sliding window. OpenCV ships a pre-trained model built in — no downloads or external files needed.
-
-### `detect_person(frame)`
-
-```python
-def detect_person(frame):
-    small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-    boxes, weights = hog.detectMultiScale(small, winStride=(8,8), padding=(8,8), scale=1.05)
-```
-
-| Step | What it does |
-|---|---|
-| Resize to 50% | HOG runs on a half-size frame — ~4× faster, no meaningful accuracy loss at normal distances |
-| `detectMultiScale` | Slides a detection window across the image at multiple zoom levels to catch people at different distances |
-| `winStride=(8,8)` | How many pixels the window jumps each step — smaller = more thorough but slower |
-| `scale=1.05` | How many zoom levels to check — 1.05 is thorough; 1.1 is faster but misses more |
-
-After detection, coordinates are doubled back to full resolution, then padded:
-
-```python
-px, py = int(w * 0.10), int(h * 0.15)
-```
-
-HOG naturally clips the head and feet. The 10% horizontal and 15% vertical padding corrects for this so the box covers the whole body.
+* **`threading.Thread`**: Spins up a background daemon worker loop that continually drains frames out of the video buffer as fast as the operating system permits.
+* **`threading.Lock()`**: Prevents memory corruption or screen tearing. The frame is locked briefly while being copied, ensuring the main thread never reads a partially written frame matrix.
+* **`read()`**: Returns an instantaneous copy of the freshest frame stored in memory, allowing your core loop to cycle at maximum GPU calculation speeds.
 
 ---
 
-## Part 2 — Background Detection Thread
+## 2. `detector.py` (Object Detection Pipeline)
 
-This is the most important piece of the architecture. HOG takes ~150ms per call — if it ran on the main thread it would cap the whole system at ~7 FPS. `DetectionThread` fixes this by running HOG on a separate thread so the camera loop never waits on it.
+### Purpose
 
-```python
-class DetectionThread:
-    def request(self, frame):
-        if self._running:
-            return   # Already busy — skip, don't queue
-        self._running = True
-        threading.Thread(target=self._run, args=(frame.copy(),), daemon=True).start()
-```
+This module handles object identification and filtering. It initializes the neural network model and isolates human coordinates while stripping away unneeded tracking parameters.
 
-### How the two threads interact
+### Code Mechanics
 
-```
-Main loop (30+ FPS)              Background thread
-───────────────────              ─────────────────
-read frame          ──────────►  HOG detection (~150ms)
-tracker.update()                 result stored safely
-draw overlay
-check get_result()  ◄──────────  result ready
-reinit tracker if fresh result
-```
+* **Ultralytics YOLOv11 Nano (`yolo11n.pt`)**: Uses a compact structure built for edge performance.
+* **Hardware Allocation Matrix**: Detects if your host machine has a CUDA-enabled graphic card environment (like your laptop's RTX 3070 Ti) and pushes the entire model layer matrix onto GPU memory space.
+* **`detect_primary_target()`**:
+* **`classes=[0]`**: Restricts the detection window exclusively to the `person` index inside the COCO object training map.
+* **`imgsz=320`**: Scales raw frame textures down to an optimized resolution inside the network layers, slashing mathematical calculations by roughly 75% compared to native 640x480 pipelines.
+* **`boxes.conf.argmax()`**: Dynamically filters out background noise. If multiple people appear, it calculates the highest confidence array, returning a singular target bounding bracket `(x1, y1, x2, y2)` to prevent tracking confusion.
 
-- **`request()`** — fires HOG on a copy of the frame. If one is already running it skips rather than queuing, keeping results fresh not stale.
-- **`_run()`** — does the actual HOG call and stores the result under a lock so the main thread can safely read it.
-- **`get_result()`** — called every frame from the main loop. Returns the result and clears it so each detection is used exactly once.
+
 
 ---
 
-## Part 3 — Constants & State
+## 3. `telemetry.py` (Visual Spatial Mathematics)
 
-```python
-DETECT_EVERY_N = 30   # Re-run HOG every N frames while tracking
-LOST_PATIENCE  = 45   # Frames of failure before returning to scan
+### Purpose
 
-FPS_COLORS = [(FPS_TARGET, green), (FPS_TARGET-5, orange), (0, red)]
-```
+Drones require physical metric boundaries to manage follow speeds. This component abstracts standard video pixels into actual real-world distances.
 
-| Variable | Purpose |
-|---|---|
-| `tracker` | Active CSRT tracker instance, or `None` when scanning |
-| `tracking` | `False` = scanning phase, `True` = tracking phase |
-| `bbox` | Current bounding box `(x, y, w, h)` of the tracked person |
-| `frame_count` | Total frames — used to time the periodic HOG re-runs |
-| `lost_count` | Consecutive frames where CSRT has failed — patience counter |
+### Code Mechanics
 
-`FPS_COLORS` is a lookup table — the FPS overlay walks down the list and picks the first colour whose threshold the current FPS meets. Green ≥ 30, orange ≥ 25, red below that.
+* **`get_distance_to_human()`**: Uses the **Pinhole Camera Model** (Monocular Focal Calibration Formula). By comparing the known physical shoulder width (50 cm) and average height (170 cm) against the pixel dimensions (w, h) inside the bounding box, it determines range depth without requiring a stereoscopic or LiDAR system.
+* **`get_distance_to_ground()`**: Computes instantaneous aircraft altitude estimation.
+* Measures the vertical pixel delta from the screen horizontal horizon line (480 / 2) down to the target's base feet tracking boundaries (y_2).
+* Merges the camera lens manual tilt offset (`CAMERA_TILT_DEG`) with the pixel angle offset to compute a total vector projection line.
+* Uses a trigonometric sine function (`math.sin()`) against the hypotenuse distance vector to gauge distance to the ground plane, filtering out domain errors below parallel horizons.
+
+
 
 ---
 
-## Part 4 — Main Loop
+## 4. `main_test.py` (The Central Orchestrator)
 
-### FPS Calculation
+### Purpose
 
-```python
-fps = 0.1 * (1.0 / (now - prev_time)) + 0.9 * fps
-```
+The execution manager. It initializes all subsystems, provisions memory parameters, maps data loops, and renders output diagnostics to the dashboard monitor.
 
-This is an **exponential moving average**. Each frame, 10% of the new instant reading is blended in and 90% of the previous smoothed value is kept. The result reacts to real changes but stays readable — not jittery.
+### Key Functional Loops
 
----
-
-### Phase 1 — Scanning
-
-```python
-if not tracking:
-    detector.request(frame)
-    result = detector.get_result()
-
-    if result:
-        tracker = make_tracker()
-        tracker.init(frame, bbox)
-        tracking, lost_count = True, 0
-```
-
-Every frame, a HOG detection is requested. Most frames get `None` back — the previous detection is still running. When a result finally arrives, CSRT is initialised on the detected box and the state flips to tracking.
+1. **Drains Sensors**: Polls the asynchronous camera module for the freshest image copy.
+2. **Computes Vision**: Passes the image matrix directly over to the GPU model thread to look for a person.
+3. **Translates Spatial Metrics**: If a person is present, it extracts pixel dimensions and hands them over to the telemetry engine to obtain tracking ranges.
+4. **Draws Heads-Up Display**: Layers vector geometry paths, targeting center reticles, and numeric diagnostic indicators onto the display array.
+5. **Calculates System Efficiency**: Logs system latency across execution cycles to compute a true rolling FPS calculation.
 
 ---
 
-### Phase 2 — Tracking
+## Project Customization Vectors
 
-```python
-ok, tracked_box = tracker.update(frame)
-```
+When preparing this modular script to be deployed on custom physical drone hardware, adjust these configuration parameters inside `main_test.py`:
 
-`tracker.update()` is the core of the loop. CSRT builds an internal appearance model of the target and searches for it in each new frame. It's fast (~5ms) and handles partial occlusion well — which is why it's doing the per-frame work instead of HOG.
-
-**If tracking succeeds (`ok = True`):**
-
-```python
-if frame_count % DETECT_EVERY_N == 0:
-    detector.request(frame)   # Non-blocking — fires in background
-
-fresh = detector.get_result()
-if fresh:
-    tracker = make_tracker()
-    tracker.init(frame, fresh)  # Re-anchor to HOG result to prevent drift
-```
-
-Every 30 frames, HOG runs again in the background to re-anchor the tracker. CSRT can drift slightly over long tracking sessions — this periodic correction snaps it back without interrupting the frame loop.
-
-**If tracking fails (`ok = False`):**
-
-```python
-lost_count += 1
-if lost_count >= LOST_PATIENCE:
-    tracker, tracking, bbox, lost_count = None, False, None, 0
-```
-
-One failed frame doesn't abandon the target. The 45-frame patience buffer handles brief occlusion, sudden motion blur, or lighting changes without jumping back to scan mode unnecessarily.
-
----
-
-### Drawing
-
-| Element | Colour | Purpose |
-|---|---|---|
-| Bounding box | Green | Full-body outline |
-| Centroid dot | Red | Exact centre of the tracked person |
-| Corner reticle | Green | 4 L-shaped accents — communicates a stable lock visually |
-| Status label | Green | `TRACKING` or `RECOVERING (N)` |
-| Centroid coords | Grey | `center: (cx, cy)` — the key output for drone navigation |
-
-The centroid `(cx, cy)` is what flows downstream into `tracker.py` to tell the drone which direction to move and by how much to keep the person centred in frame.
-
----
-
-### Keyboard Controls
-
-| Key | Action |
-|---|---|
-| `q` | Quit and release the camera |
-| `r` | Force-reset — useful if the tracker locks onto the wrong person |
-
----
-
-## Performance at a Glance
-
-| Operation | Time | Thread |
-|---|---|---|
-| `cap.read()` | ~1ms | Main |
-| `tracker.update()` | ~5ms | Main |
-| Drawing | ~1ms | Main |
-| **Total main loop** | **~7ms → 30+ FPS** | |
-| HOG `detectMultiScale` | ~150ms | Background |
-| CSRT reinit | ~20ms | Background |
-
-The main loop only ever pays for the top three rows. HOG and reinit run concurrently and invisibly.
-
----
-
-## How This Fits Into the Drone
-
-```
-human_detector.py
-    │  bbox (x, y, w, h)
-    │  centroid (cx, cy)
-    ▼
-tracker.py          → calculates directional error from centroid
-    ▼
-distance_estimator.py → estimates real-world distance from bbox height
-    ▼
-flight_manager.py   → converts error + distance into movement commands
-    ▼
-controller.py       → sends commands to the drone hardware
-```
+| Constant | System impact |
+| --- | --- |
+| `DEVICE` | Change `"cuda"` to `"cpu"` if moving to an unaccelerated CPU platform like a Raspberry Pi. |
+| `CAMERA_TILT_DEG` | Match the exact physical downward angle (in degrees) of your drone's camera frame mount. |
+| `KNOWN_WIDTH_CM` | Calibrate this to the specific shoulder width of your primary flight target for increased distance precision. |
+| `imgsz=320` | Lower this inside `detector.py` to `256` if you require higher frame speeds on lightweight companion processors. |
