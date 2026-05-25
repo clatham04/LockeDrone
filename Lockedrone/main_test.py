@@ -1,184 +1,112 @@
 import cv2
 import time
+import math
+import torch
 import threading
+from ultralytics import YOLO
 
-# ── HOG People Detector ───────────────────────────────────────────────────────
-hog = cv2.HOGDescriptor()
-hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+# ── 1. Asynchronous Camera Thread ─────────────────────────────────────────────
+class BackgroundCamera:
+    """Reads webcam frames in a separate thread to eliminate I/O blocking."""
+    def __init__(self, src=0):
+        self.cap = cv2.VideoCapture(src)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.ret, self.frame = self.cap.read()
+        self.running = True
+        self.lock = threading.Lock()
+        
+        threading.Thread(target=self._update, daemon=True).start()
 
-def detect_person(frame):
-    """Run HOG on a downscaled frame, return full-res bbox or None."""
-    small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-    boxes, weights = hog.detectMultiScale(small, winStride=(8,8), padding=(8,8), scale=1.05)
+    def _update(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.ret = ret
+                    self.frame = frame
+            time.sleep(0.01)
 
-    if len(boxes) == 0:
-        return None
+    def read(self):
+        with self.lock:
+            return self.ret, self.frame.copy() if self.ret else None
 
-    x, y, w, h = boxes[weights.flatten().argmax()]
-    x, y, w, h = (v * 2 for v in (x, y, w, h))  # Scale back to full resolution
+    def release(self):
+        self.running = False
+        self.cap.release()
 
-    # Pad to cover full body (HOG clips head and feet)
-    px, py = int(w * 0.10), int(h * 0.15)
-    x = max(0, x - px)
-    y = max(0, y - py)
-    w = min(frame.shape[1] - x, w + 2 * px)
-    h = min(frame.shape[0] - y, h + 2 * py)
+# ── 2. Forced CPU Initialization ──────────────────────────────────────────────
+model = YOLO("yolo11n.pt")
+device = "cpu"  # Explicitly forcing CPU execution to test performance difference
 
-    return x, y, w, h
+print(f"Locke Drone Status -> Engine: {device.upper()} (Forced Benchmarking Mode)")
 
+# ── 3. Calibration Constants ──────────────────────────────────────────────────
+KNOWN_WIDTH_CM  = 50.0   
+KNOWN_HEIGHT_CM = 170.0  
+FOCAL_LENGTH_PX = 640.0  
+CAMERA_TILT_DEG = 15.0   
 
-# ── Background Detection Thread ───────────────────────────────────────────────
-class DetectionThread:
-    """Runs HOG in a background thread so it never blocks the main loop."""
+# Start the non-blocking camera stream
+cam = BackgroundCamera(0)
+time.sleep(1.0) 
 
-    def __init__(self):
-        self._result  = None
-        self._running = False
-        self._lock    = threading.Lock()
+fps_smooth = 30.0
+prev_time = time.perf_counter()
 
-    def request(self, frame):
-        """Start a detection if one isn't already running."""
-        if self._running:
-            return
-        self._running = True
-        threading.Thread(target=self._run, args=(frame.copy(),), daemon=True).start()
-
-    def _run(self, frame):
-        result = detect_person(frame)
-        with self._lock:
-            self._result = result
-        self._running = False
-
-    def get_result(self):
-        """Return the latest detection and clear it. Returns None if not ready."""
-        with self._lock:
-            result, self._result = self._result, None
-        return result
-
-
-# ── Tracker ───────────────────────────────────────────────────────────────────
-def make_tracker():
-    return cv2.TrackerCSRT_create()
-
-
-# ── Constants ─────────────────────────────────────────────────────────────────
-DETECT_EVERY_N = 30   # Frames between background HOG re-runs while tracking
-LOST_PATIENCE  = 45   # Frames of tracker failure before returning to scan
-
-FPS_TARGET     = 30
-FPS_COLORS     = [(FPS_TARGET, (0,255,0)), (FPS_TARGET-5, (0,165,255)), (0, (0,0,255))]
-
-# ── State ─────────────────────────────────────────────────────────────────────
-tracker     = None
-tracking    = False
-bbox        = None
-frame_count = 0
-lost_count  = 0
-detector    = DetectionThread()
-fps         = 0.0
-prev_time   = time.perf_counter()
-
-# ── Camera ────────────────────────────────────────────────────────────────────
-cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_FPS,          60)
-
-if not cap.isOpened():
-    print("Error: Could not open camera.")
-    exit()
-
-print("Press 'q' to quit | 'r' to reset tracker")
-
-# ── Main Loop ─────────────────────────────────────────────────────────────────
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Failed to capture frame.")
-        break
+    ret, frame = cam.read()
+    if not ret: break
 
-    frame_count += 1
-    display = frame.copy()
-
-    # FPS — exponential moving average
-    now       = time.perf_counter()
-    fps       = 0.1 * (1.0 / (now - prev_time)) + 0.9 * fps
+    # Performance Timers 
+    now = time.perf_counter()
+    fps_smooth = 0.1 * (1.0 / (now - prev_time)) + 0.9 * fps_smooth
     prev_time = now
 
-    # ── Phase 1: Scanning ─────────────────────────────────────────────────────
-    if not tracking:
-        detector.request(frame)
-        result = detector.get_result()
+    # Run YOLOv11 strictly on the CPU
+    results = model(frame, conf=0.45, classes=[0], verbose=False, imgsz=320, device="cpu")
+    boxes = results[0].boxes
 
-        if result:
-            bbox    = result
-            tracker = make_tracker()
-            tracker.init(frame, bbox)
-            tracking, lost_count = True, 0
-            print("🔒 Locked on to person.")
-        else:
-            cv2.putText(display, "Scanning for person...", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+    if len(boxes) > 0:
+        best_idx = int(boxes.conf.argmax())
+        x1, y1, x2, y2 = map(int, boxes.xyxy[best_idx])
+        conf = float(boxes.conf[best_idx])
+        w, h = x2 - x1, y2 - y1
+        cx, cy = x1 + w // 2, y1 + h // 2
 
-    # ── Phase 2: Tracking ─────────────────────────────────────────────────────
+        # ── Distance to Human ─────────────────────────────────────────────────
+        d_width = (KNOWN_WIDTH_CM * FOCAL_LENGTH_PX) / w if w > 0 else None
+        d_height = (KNOWN_HEIGHT_CM * FOCAL_LENGTH_PX) / h if h > 0 else None
+        estimates = [d for d in [d_width, d_height] if d is not None]
+        dist_human = sum(estimates) / len(estimates) if estimates else None
+
+        # ── Corrected Distance to Ground (Altitude) ───────────────────────────
+        dist_ground = None
+        if dist_human:
+            px_from_center = (y1 + h) - (480 / 2) 
+            angle_offset = (px_from_center / 240.0) * (45.0 / 2.0) 
+            total_angle = CAMERA_TILT_DEG + angle_offset
+            
+            if total_angle > 0 and total_angle < 85:
+                dist_ground = dist_human * math.sin(math.radians(total_angle))
+
+        # ── UI Overlays (Changed color tuples back to green: (0, 255, 0)) ──────
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  
+        cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
+
+        human_m = f"Dist to Human: {dist_human/100:.2f}m" if dist_human else "Dist: --"
+        ground_m = f"Dist to Ground: {dist_ground/100:.2f}m" if dist_ground else "Alt: --"
+        
+        for i, text in enumerate([f"Target: Person ({conf:.0%})", human_m, ground_m]):
+            cv2.putText(frame, text, (x1, y1 - 10 - (i * 18)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     else:
-        ok, tracked_box = tracker.update(frame)
+        cv2.putText(frame, "🛰️ SCANNING FOR TARGET...", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
-        if ok:
-            bbox, lost_count = tuple(int(v) for v in tracked_box), 0
+    # Left the overall system FPS benchmark marker yellow/red for interface clarity
+    cv2.putText(frame, f"FPS: {fps_smooth:.1f} (CPU)", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+    
+    cv2.imshow("Locke Drone Core Feed (CPU TESTING)", frame)
+    if cv2.waitKey(1) & 0xFF == ord("q"): break
 
-            if frame_count % DETECT_EVERY_N == 0:
-                detector.request(frame)
-
-            fresh = detector.get_result()
-            if fresh:
-                bbox    = fresh
-                tracker = make_tracker()
-                tracker.init(frame, bbox)
-        else:
-            lost_count += 1
-            if lost_count >= LOST_PATIENCE:
-                print("⚠️  Lost target. Scanning...")
-                tracker, tracking, bbox, lost_count = None, False, None, 0
-
-        # Draw
-        if bbox:
-            x, y, w, h = bbox
-            cx, cy = x + w // 2, y + h // 2
-
-            cv2.rectangle(display, (x, y), (x+w, y+h), (0,255,0), 2)
-            cv2.circle(display, (cx, cy), 6, (0,0,255), -1)
-
-            # Corner accent reticle
-            a = 18
-            for (x1,y1), (x2,y2), (x3,y3) in [
-                ((x,y),   (x+a,y),   (x,y+a)),
-                ((x+w,y), (x+w-a,y), (x+w,y+a)),
-                ((x,y+h), (x+a,y+h), (x,y+h-a)),
-                ((x+w,y+h),(x+w-a,y+h),(x+w,y+h-a)),
-            ]:
-                cv2.line(display, (x1,y1), (x2,y2), (0,255,0), 3)
-                cv2.line(display, (x1,y1), (x3,y3), (0,255,0), 3)
-
-            status = "TRACKING" if lost_count == 0 else f"RECOVERING ({lost_count})"
-            cv2.putText(display, status,            (x, y-12),    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
-            cv2.putText(display, f"center: ({cx},{cy})", (x, y+h+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
-
-    # ── FPS Overlay ───────────────────────────────────────────────────────────
-    fps_color = next(c for threshold, c in FPS_COLORS if fps >= threshold)
-    fps_text  = f"FPS: {fps:.1f}"
-    (tw, th), _ = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.65, 2)
-    cv2.rectangle(display, (8, 8), (18+tw, 18+th+6), (0,0,0), -1)
-    cv2.putText(display, fps_text, (13, 13+th), cv2.FONT_HERSHEY_SIMPLEX, 0.65, fps_color, 2)
-
-    cv2.imshow("Locke — Human Tracker", display)
-
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
-        break
-    if key == ord('r'):
-        print("Manual reset.")
-        tracker, tracking, bbox, lost_count = None, False, None, 0
-
-cap.release()
+cam.release()
 cv2.destroyAllWindows()
