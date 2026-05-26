@@ -1,1 +1,0 @@
-tracker.py keeps the person in the center and controls the rotating piece of the camera
