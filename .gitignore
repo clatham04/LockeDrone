@@ -1,6 +1,7 @@
 .venv/
 venv/
 env/
-__pycache__/
-yolo11n.pt
-
+**/__pycache__/
+*.pt
+*.engine
+.vscode/
