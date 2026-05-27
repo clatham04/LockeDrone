@@ -1,0 +1,10 @@
+# Core Deep Learning & Computer Vision Dependencies
+torch
+torchvision
+torchaudio
+ultralytics>=8.3.0
+opencv-contrib-python
+av                      # Crucial dependency for Ultralytics YOLO11 video handling
+
+# Utilities
+numpy
