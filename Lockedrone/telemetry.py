@@ -10,10 +10,14 @@ class TelemetryCalculator:
 
     def get_distance_to_human(self, w, h):
         """Calculates optical distance estimating based on target pixel size dimensions."""
-        d_width = (self.known_width * self.focal_length) / w if w > 0 else None
-        d_height = (self.known_height * self.focal_length) / h if h > 0 else None
-        estimates = [d for d in [d_width, d_height] if d is not None]
-        return sum(estimates) / len(estimates) if estimates else None
+        if w <= 0 or h <= 0:
+            return None
+            
+        d_width = (self.known_width * self.focal_length) / w
+        d_height = (self.known_height * self.focal_length) / h
+        
+        # Simple mathematical average is low cost for real-time tracking execution
+        return (d_width + d_height) / 2.0
 
     def get_distance_to_ground(self, dist_human, y2, frame_height=480):
         """Calculates distance to ground using physical downward pitch layout vectors."""
@@ -21,8 +25,8 @@ class TelemetryCalculator:
             return None
             
         # Distance from screen center down to the feet pixel coordinate
-        px_from_center = y2 - (frame_height / 2) 
-        angle_offset = (px_from_center / (frame_height / 2)) * (45.0 / 2.0) 
+        px_from_center = y2 - (frame_height / 2.0) 
+        angle_offset = (px_from_center / (frame_height / 2.0)) * (45.0 / 2.0) 
         total_angle = self.camera_tilt + angle_offset
         
         if 0 < total_angle < 85:
