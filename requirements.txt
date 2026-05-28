@@ -1,10 +1,12 @@
-# Core Deep Learning & Computer Vision Dependencies
-torch
-torchvision
-torchaudio
+# Core Computer Vision & Edge AI Architecture
 ultralytics>=8.3.0
 opencv-contrib-python
-av                      # Crucial dependency for Ultralytics YOLO11 video handling
+ncnn                   # Natively accelerates YOLO models on the Raspberry Pi 4 CPU
 
-# Utilities
+# NCNN Required Sub-Dependencies
+portalocker
+tqdm
+
+# Video Handling & Math Utilities
+av                     # Crucial dependency for Ultralytics video handling
 numpy
