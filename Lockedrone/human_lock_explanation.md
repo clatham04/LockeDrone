@@ -1,116 +1,83 @@
-### main_test.py markdown file ###
+## human_lock code documentation ##
 
+Locke Drone Autonomous Tracking System — Software Architecture Manual
+This document provides a comprehensive breakdown of the core software components driving the Locke Drone autonomous vision, tracking, and telemetry calculation pipeline.
 
-# Locke Drone System Architecture Documentation
+The software architecture is engineered to run seamlessly on both desktop environments (for prototyping) and edge computing hardware like the Raspberry Pi 4B (for deployment). It automatically adjusts its performance settings based on the host operating system.
 
-This document provides a technical breakdown of the modular computer vision suite driving the **Locke Drone** project. The software is split into separate, specialized modules to maximize processing efficiency, decouple visual calculations from hardware constraints, and prepare the system for upstream integration with flight controllers.
+1. System Dependency Installation
+Before executing the core tracking software, your environment must be populated with the correct lightweight computer vision and machine learning frameworks.
 
----
+Python Requirements Configuration (requirements.txt)
+Save the following configuration into a file named requirements.txt in your project root folder:
 
-## Architecture Overview
+Plaintext
+# Core Computer Vision & Edge AI Architecture
+ultralytics>=8.3.0
+opencv-contrib-python
+ncnn                   # Natively accelerates YOLO models on the Raspberry Pi 4 CPU
 
-The system is split into four distinct files that work in an orchestration chain. By uncoupling frame grabbing from model inference, the script achieves zero I/O blocking, optimizing the frame processing pipeline for real-time edge processing.
+# NCNN Required Sub-Dependencies
+portalocker
+tqdm
 
-```
-                  ┌──────────────────────┐
-                  │   BackgroundCamera   │  <--- Continuous non-blocking 
-                  │     (camera.py)      │       hardware capture loop
-                  └──────────┬───────────┘
-                             │ (Latest Frame)
-                             ▼
-                  ┌──────────────────────┐
-                  │      main_test.py    │  <--- Orchestration Hub
-                  └────┬────────────┬────┘       & UI Rendering
-                       │            │
-  (Inference Requests) │            │ (Bounding Box Specs)
-                       ▼            ▼
- ┌──────────────────────┐  ┌──────────────────────┐
- │     HumanDetector    │  │ TelemetryCalculator  │
- │     (detector.py)    │  │    (telemetry.py)    │
- └──────────────────────┘  └──────────────────────┘
-  Runs YOLOv11 on GPU       Computes physical human
-  to isolate target info    & altitude ranges
+# Video Handling & Math Utilities
+av                     # Crucial dependency for Ultralytics video handling
+numpy
+Installation Steps
+On Your Development PC (Windows)
+Open PowerShell or your system terminal within your active virtual environment (.venv) and execute:
 
-```
+PowerShell
+# 1. Activate your virtual environment if not already active
+.venv\Scripts\Activate.ps1
 
----
+# 2. Update and sync your packages cleanly
+pip install -r requirements.txt
+On the Raspberry Pi 4B (Linux)
+Before installing the Python packages via pip, the underlying system libraries for matrix mathematical computations and open-source thread scheduling must be present on your Linux distribution. Run the following commands in the Pi's terminal:
 
-## 1. `camera.py` (Asynchronous Video Processing)
+Bash
+# 1. Update system package repositories
+sudo apt update && sudo apt upgrade -y
 
-### Purpose
+# 2. Install hardware-level BLAS and OpenMP packages required by NCNN
+sudo apt install -y libopenblas-dev libgomp1
 
-Standard opencv camera reads (`cv2.VideoCapture().read()`) are blocking operations. The main script must pause and wait for the webcam hardware to physically register a frame, trapping your execution loop at the camera's baseline capture capability (typically 30 FPS).
+# 3. Activate your virtual environment and install dependencies
+source .venv/bin/activate
+pip install -r requirements.txt
+2. Core Architectural Components
+The tracking architecture is modularized into four distinct Python files. Each script isolates a specific physical or logical layer of the drone's runtime execution.
 
-`camera.py` fixes this by pushing the camera pipeline into a dedicated background execution thread using Python's `threading` and `lock` primitives.
+Module 1: camera.py (Hardware Capture Layer)
+This script abstracts hardware interaction with the camera sensor. Its key innovation is an Automatic Operating System Switcher that protects resource allocation depending on whether the drone is bench-testing or flying.
 
-### Code Mechanics
+Windows Operation (Bench-Testing Mode): Windows laptop webcams often experience thread-deadlocks when bombarded with high-speed parallel frame captures. On Windows, camera.py disables complex background multithreading and taps directly into sequential hardware frame collection using the stable cv2.CAP_DSHOW (DirectShow) video driver pipeline.
 
-* **`threading.Thread`**: Spins up a background daemon worker loop that continually drains frames out of the video buffer as fast as the operating system permits.
-* **`threading.Lock()`**: Prevents memory corruption or screen tearing. The frame is locked briefly while being copied, ensuring the main thread never reads a partially written frame matrix.
-* **`read()`**: Returns an instantaneous copy of the freshest frame stored in memory, allowing your core loop to cycle at maximum GPU calculation speeds.
+Linux Operation (Flight Mode): On the Raspberry Pi, the script automatically forks a dedicated, non-blocking background thread. It targets the native kernel-level video capture pipeline (cv2.CAP_V4L2) and restricts the internal image buffer size to exactly 1 frame (cv2.CAP_PROP_BUFFERSIZE = 1). This completely eliminates "lag buildup," ensuring the AI always evaluates the absolute newest physical frame.
 
----
+Module 2: detector.py (Edge Artificial Intelligence Layer)
+This file governs spatial object categorization. Instead of initializing heavy, processing-intensive deep learning networks, it interfaces directly with your pre-compiled, optimized NCNN model directory (yolo11n_ncnn_model).
 
-## 2. `detector.py` (Object Detection Pipeline)
+NCNN is a high-performance neural network inference framework optimized explicitly for mobile platforms and ARM-based hardware architectures (like the Raspberry Pi CPU).
 
-### Purpose
+The script processes input frames down to a reduced pixel array envelope (imgsz=256), stripping away extra resolution overhead to maximize speed. It isolates the primary human entity in the field of view and outputs structural bounding box boundaries (x1, y1, x2, y2) alongside a fractional tracking certainty metric (confidence).
 
-This module handles object identification and filtering. It initializes the neural network model and isolates human coordinates while stripping away unneeded tracking parameters.
+Module 3: telemetry.py (Spatial Translation Math)
+This file acts as the drone's digital radar, translating 2D flat camera pixel data into true physical metric dimensions without requiring heavy stereo-vision sensors or active LiDAR modules.
 
-### Code Mechanics
+Distance Translation: Using the mathematical properties of focal length ratios, the module calculates distance relative to an average human scale baseline (assuming a physical target width of 50cm and height of 170cm). If the pixel bounding box shrinks, the target is known to be moving away; if it expands, the target is approaching.
 
-* **Ultralytics YOLOv11 Nano (`yolo11n.pt`)**: Uses a compact structure built for edge performance.
-* **Hardware Allocation Matrix**: Detects if your host machine has a CUDA-enabled graphic card environment (like your laptop's RTX 3070 Ti) and pushes the entire model layer matrix onto GPU memory space.
-* **`detect_primary_target()`**:
-* **`classes=[0]`**: Restricts the detection window exclusively to the `person` index inside the COCO object training map.
-* **`imgsz=320`**: Scales raw frame textures down to an optimized resolution inside the network layers, slashing mathematical calculations by roughly 75% compared to native 640x480 pipelines.
-* **`boxes.conf.argmax()`**: Dynamically filters out background noise. If multiple people appear, it calculates the highest confidence array, returning a singular target bounding bracket `(x1, y1, x2, y2)` to prevent tracking confusion.
+Altitude Extrapolation: Using the known geometric pitch angle of your physical drone camera casing (camera_tilt=15.0 degrees) and mapping the distance estimation alongside where the target's feet intersect the bottom horizontal raster boundary, the class applies trigonometry to output an approximate spatial relative altitude vector.
 
+Module 4: human_lock.py (Unified Control & Telemetry Dashboard)
+The main orchestration hub. It handles the central infinite runtime loop, pulls frames, drives detection commands, processes the structural math calculations, and controls the visual outputs.
 
+Pacing Delay: Implements a microsecond time.sleep(0.005) loop throttle to prevent host CPU thread starvation, safeguarding device stability during sustained execution blocks.
 
----
+Head Targeting Math: Translates body position data to establish a precise coordinate lock target on the human head. By taking the horizontal midpoint of the entity (target_center_x) and dropping down by exactly 10% of the calculated total body bounding frame height (y1 + box_height * 0.10), it maps a dynamic coordinate set. This ensures that whether you move near or far, a visual tracking lock (a filled red circle) sits consistently on the target's head.
 
-## 3. `telemetry.py` (Visual Spatial Mathematics)
+Unified Live-Updating Dashboard: Rather than writing repetitive log dumps that scroll into a massive wall of text, the script monitors its loop sequences via a frames-per-second modulus counter (fps_counter % 10). Every ten loops, it systematically clears the command screen and prints a fixed-width, live-updating instrumentation panel revealing status, system calculation rates (FPS), target metrics, and spatial vectors.
 
-### Purpose
-
-Drones require physical metric boundaries to manage follow speeds. This component abstracts standard video pixels into actual real-world distances.
-
-### Code Mechanics
-
-* **`get_distance_to_human()`**: Uses the **Pinhole Camera Model** (Monocular Focal Calibration Formula). By comparing the known physical shoulder width (50 cm) and average height (170 cm) against the pixel dimensions (w, h) inside the bounding box, it determines range depth without requiring a stereoscopic or LiDAR system.
-* **`get_distance_to_ground()`**: Computes instantaneous aircraft altitude estimation.
-* Measures the vertical pixel delta from the screen horizontal horizon line (480 / 2) down to the target's base feet tracking boundaries (y_2).
-* Merges the camera lens manual tilt offset (`CAMERA_TILT_DEG`) with the pixel angle offset to compute a total vector projection line.
-* Uses a trigonometric sine function (`math.sin()`) against the hypotenuse distance vector to gauge distance to the ground plane, filtering out domain errors below parallel horizons.
-
-
-
----
-
-## 4. `main_test.py` (The Central Orchestrator)
-
-### Purpose
-
-The execution manager. It initializes all subsystems, provisions memory parameters, maps data loops, and renders output diagnostics to the dashboard monitor.
-
-### Key Functional Loops
-
-1. **Drains Sensors**: Polls the asynchronous camera module for the freshest image copy.
-2. **Computes Vision**: Passes the image matrix directly over to the GPU model thread to look for a person.
-3. **Translates Spatial Metrics**: If a person is present, it extracts pixel dimensions and hands them over to the telemetry engine to obtain tracking ranges.
-4. **Draws Heads-Up Display**: Layers vector geometry paths, targeting center reticles, and numeric diagnostic indicators onto the display array.
-5. **Calculates System Efficiency**: Logs system latency across execution cycles to compute a true rolling FPS calculation.
-
----
-
-## Project Customization Vectors
-
-When preparing this modular script to be deployed on custom physical drone hardware, adjust these configuration parameters inside `main_test.py`:
-
-| Constant | System impact |
-| --- | --- |
-| `DEVICE` | Change `"cuda"` to `"cpu"` if moving to an unaccelerated CPU platform like a Raspberry Pi. |
-| `CAMERA_TILT_DEG` | Match the exact physical downward angle (in degrees) of your drone's camera frame mount. |
-| `KNOWN_WIDTH_CM` | Calibrate this to the specific shoulder width of your primary flight target for increased distance precision. |
-| `imgsz=320` | Lower this inside `detector.py` to `256` if you require higher frame speeds on lightweight companion processors. |
+Hysteresis Filter (Lost Target Hold): Protects flight stability from momentary signal drops (e.g. from rapid movement or motion blur). If the AI model loses its target detection lock for a split second, the script triggers a 5-frame grace tracking filter. It retains last-known coordinates smoothly rather than causing the drone to abruptly snap into an erratic searching behavior.

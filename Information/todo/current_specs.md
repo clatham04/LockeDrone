@@ -1,20 +1,23 @@
-alternatives to the rasberry pi:
+# drone specs #
 
+DIY Drone Kit with Brushless Motor & Dual Camera
+- on amazon
+- cost: $70
+- 
 
-7-in long range FPV Drone for $150. Youtube
-https://www.youtube.com/watch?v=0jOUTYBneVo
+How to build a 7-inch long range FPV Drone for $150
+- on youtub, probably gonna be around $200+
 
-Jacobs recommend:
-DIY Drone Kit with Brushless Motor and Dual Camera...
-$67 on amazone
-
-7 Inch 295mm FPV Drone Frame Kit With 1300KV 6S Brushless Motor And F4V3S 60A Flight Stack Accessories
-$295 on amazon
-Might br able to find parts cheaper on Tmue, Aliexpress, etc.
+Just look on youtub for a build if the $70 won't work
 
 
 
 
-Rasberyy pi 4b
+# Extra payload weight: #
+- 46 grames (1.62 oz)
+1. Frame Size Breakdown
+5-Inch Frames: A 5-inch drone typically has a payload capacity of roughly 150g to 300g while maintaining good agility. A bare Pi is an easy lift, but space on the top plate can get a bit tight. You will need to think about mounting placement so it doesn't block your GPS or FPV antennas.
+
+6 and 7-Inch Frames: These are generally built for long-range flying or heavier cinematic cameras. Their payload capacity jumps to 400g to 800g+. They have much larger top plates, making it significantly easier to mount the Pi, a dedicated power regulator, and any extra sensors (like a Pi Camera).
 
 
