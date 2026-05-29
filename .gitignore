@@ -11,9 +11,8 @@ __pycache__/
 
 # Computer Vision / Deep Learning Models
 *.pt
-*.onnx
-Lockedrone/yolo11n.pt
 
+# Test and Hardware-Specific Files
+Lockedrone/alienware_test.py
+Lockedrone/test.py
 
-Lockedrone/alienware_test/
-Lockedrone/test/
