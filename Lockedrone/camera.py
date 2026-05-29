@@ -1,41 +1,47 @@
 import cv2
-import time
-import threading
-import platform # Added to check system OS
+import platform
 
 class BackgroundCamera:
-    """Reads webcam frames in a separate thread optimized for environment context."""
+    """Handles camera streams cleanly. Uses threading on Linux (Pi), and direct stream on Windows."""
     def __init__(self, src=0, width=640, height=480):
-        # Checks if you are on Linux (Raspberry Pi) or Windows/macOS (Laptop)
-        if platform.system() == "Linux":
+        self.is_linux = platform.system() == "Linux"
+        
+        if self.is_linux:
+            # High-speed background thread capture for the Pi
+            import threading
             self.cap = cv2.VideoCapture(src, cv2.CAP_V4L2)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        else:
-            # Safe default fallback for your Laptop
-            self.cap = cv2.VideoCapture(src)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        
-        self.ret, self.frame = self.cap.read()
-        self.running = True
-        self.lock = threading.Lock()
-        
-        threading.Thread(target=self._update, daemon=True).start()
+            self.ret, self.frame = self.cap.read()
+            self.running = True
+            self.lock = threading.Lock()
+            threading.Thread(target=self._update, daemon=True).start()
+        else:
+            # Bulletproof DirectShow driver for Windows Laptops to prevent freezes
+            self.cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
     def _update(self):
+        # This only runs on Linux/Raspberry Pi
         while self.running:
             ret, frame = self.cap.read()
             if ret:
                 with self.lock:
                     self.ret = ret
                     self.frame = frame
-            time.sleep(0.005)
 
     def read(self):
-        with self.lock:
-            return self.ret, self.frame
+        if self.is_linux:
+            with self.lock:
+                return self.ret, self.frame
+        else:
+            # On Windows, read directly from the camera stream to avoid thread deadlocks
+            return self.cap.read()
 
     def release(self):
-        self.running = False
+        if self.is_linux:
+            self.running = False
         self.cap.release()
