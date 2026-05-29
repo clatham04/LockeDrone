@@ -1,5 +1,19 @@
-alienware_test.py
-test.py
-yolo11n.pt
+# Python Virtual Environments
+.venv/
+venv/
+ENV/
+
+# Python Bytecode and Caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Computer Vision / Deep Learning Models
+*.pt
+*.onnx
+Lockedrone/yolo11n.pt
 
 
+Lockedrone/alienware_test/
+Lockedrone/test/
