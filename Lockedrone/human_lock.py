@@ -34,8 +34,11 @@ def main():
             if not ret or frame is None:
                 continue
 
-            # Run NCNN Edge AI Inference
-            target = detector.detect_primary_target(frame, conf_threshold=0.30, imgsz=256)
+            # Run NCNN Edge AI Inference.
+            # NOTE: imgsz MUST match the size the ncnn model was exported at (640 - see
+            # yolo11n_ncnn_model/metadata.yaml). ncnn exports are fixed-shape; feeding a
+            # different size corrupts the heap -> "malloc(): invalid size (unsorted)".
+            target = detector.detect_primary_target(frame, conf_threshold=0.30, imgsz=640)
             
             status_msg = "[SEARCHING] Active scan... No targets in frame."
             extra_telemetry = ""
