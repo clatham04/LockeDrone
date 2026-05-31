@@ -3,16 +3,12 @@
 venv/
 ENV/
 
+Lockedrone/_pycache__/
+Lockedrone/alienware_test.py
+Lockedrone/test.py
+
 # Python Bytecode and Caches
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Computer Vision / Deep Learning Models
-*.pt
-
-# Test and Hardware-Specific Files
-Lockedrone/alienware_test.py
-Lockedrone/test.py
-

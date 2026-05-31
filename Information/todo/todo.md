@@ -22,8 +22,8 @@ Grade = 94%
 
 
 # Todo by sunday 5/31/2026
-- [] Fix Documentation errors.
-- [] Mkae assist list, md file should be all the cuurent stuff you have, Ask jacob for specs on camera, and pi.
+- [x] Fix Documentation errors.
+- [x] Mkae assist list, md file should be all the cuurent stuff you have, Ask jacob for specs on camera, and pi.
 - [] Remove stuff we dont need on requirements.txt
 - [] Make detection 10FPS.
 - [] Make the camera detect human and the red dot at human head.

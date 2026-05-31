@@ -1,12 +1,25 @@
 from ultralytics import YOLO
+from pathlib import Path
 import numpy as np
 
 class HumanDetector:
     """Handles initialization and prediction optimized for Raspberry Pi CPU execution."""
     def __init__(self, model_path="yolo11n_ncnn_model", device="cpu"):
-        # Note: 'yolo11n_ncnn_model' is a compiled directory format that leverages 
-        # ARM NEON instructions natively on the Pi 4B CPU.
-        self.model = YOLO(model_path, task="detect")
+        # Note: 'yolo11n_ncnn_model' is a compiled directory format (holding
+        # model.ncnn.param + model.ncnn.bin) that leverages ARM NEON instructions
+        # natively on the Pi 4B CPU.
+        #
+        # Resolve to an absolute path relative to the repo root (one level up from
+        # this file) so it works no matter which directory you launch from. Without
+        # this, Ultralytics silently falls back to downloading yolo11n.pt when the
+        # relative path isn't found from the current working directory.
+        model_dir = Path(model_path)
+        if not model_dir.is_absolute():
+            model_dir = (Path(__file__).resolve().parent.parent / model_path)
+        if not model_dir.exists():
+            raise FileNotFoundError(f"NCNN model not found at: {model_dir}")
+
+        self.model = YOLO(str(model_dir), task="detect")
         self.device = device
 
     def detect_primary_target(self, frame, conf_threshold=0.40, imgsz=256):
