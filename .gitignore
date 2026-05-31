@@ -1,14 +1,20 @@
-# Python Virtual Environments
+# Python virtual environments
 .venv/
 venv/
 ENV/
 
-Lockedrone/_pycache__/
-Lockedrone/alienware_test.py
-Lockedrone/test.py
-
-# Python Bytecode and Caches
+# Python bytecode and caches
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Local-only test scripts
+Lockedrone/alienware_test.py
+Lockedrone/test.py
+
+# Generated model artifacts — rebuild on the target with: python export_model.py
+yolo11n_ncnn_model/
+
+# Model / weights download cache
+.huggingface/
