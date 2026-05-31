@@ -10,3 +10,4 @@ tqdm
 # Video Handling & Math Utilities
 av                     # Crucial dependency for Ultralytics video handling
 numpy
+pyyaml                 # detector.py reads the ncnn model's metadata.yaml (also an ultralytics sub-dependency)

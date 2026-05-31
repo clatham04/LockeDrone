@@ -1,64 +1,66 @@
-import cv2
+"""Threaded camera capture.
+
+A background thread keeps grabbing frames so the main loop never blocks waiting on
+the camera. We always hand back the newest frame (buffer size 1) to avoid lag
+build-up. This is the one place a small class earns its keep — it has to hold the
+capture handle and share the latest frame across two threads.
+"""
+import platform
 import threading
 import time
-import platform
 
-class BackgroundCamera:
-    """Threaded camera capture handling with automated Windows/Linux driver fallbacks."""
-    def __init__(self, src=0, width=640, height=480):
-        self.running = True
+import cv2
+
+
+class Camera:
+    def __init__(self, index, width, height):
+        self.capture = self._open(index, width, height)
         self.lock = threading.Lock()
-        self.frame = None
-        self.ret = False
+        self.latest_frame = None
+        self.running = True
 
+        if self.capture.isOpened():
+            time.sleep(1.0)                       # let the sensor auto-expose
+            _, self.latest_frame = self.capture.read()
+
+        threading.Thread(target=self._grab_loop, daemon=True).start()
+
+    def _open(self, index, width, height):
+        """Open the camera with the right backend for the OS."""
         if platform.system() == "Windows":
-            # Try Media Foundation first (highly compatible with modern Windows 11 / Alienware)
-            print(f"[CAMERA] Attempting Windows MSMF backend on index {src}...")
-            self.cap = cv2.VideoCapture(src, cv2.CAP_MSMF)
-            
-            # Fallback to standard initialization if MSMF fails to open
-            if not self.cap.isOpened():
-                print("[CAMERA] MSMF failed. Falling back to universal auto-detect backend...")
-                self.cap = cv2.VideoCapture(src)
+            cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
+            if not cap.isOpened():
+                cap = cv2.VideoCapture(index)     # universal fallback
         else:
-            # Native Linux configuration for the Raspberry Pi
-            print(f"[CAMERA] Initializing Linux V4L2 backend on index {src}...")
-            self.cap = cv2.VideoCapture(src, cv2.CAP_V4L2)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            
-        # Set frame parameters
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        
-        # Double check if hardware hooked successfully
-        if not self.cap.isOpened():
-            print(f"[WARNING] Camera hardware could not be opened on index {src}.")
-            self.ret = False
-        else:
-            time.sleep(1.0)  # Warm-up delay for lens exposure adjustment
-            self.ret, self.frame = self.cap.read()
+            cap = cv2.VideoCapture(index, cv2.CAP_V4L2)   # native Linux / Pi
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-        # Start the background thread loop
-        threading.Thread(target=self._update, daemon=True).start()
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
-    def _update(self):
+        if not cap.isOpened():
+            print(f"[CAMERA] WARNING: could not open camera index {index}")
+        return cap
+
+    def _grab_loop(self):
+        """Background thread: continuously store the most recent frame."""
         while self.running:
-            if self.cap.isOpened():
-                ret, frame = self.cap.read()
-                if ret:
-                    with self.lock:
-                        self.ret = ret
-                        self.frame = frame
-            time.sleep(0.01)
+            ok, frame = self.capture.read()
+            if ok:
+                with self.lock:
+                    self.latest_frame = frame
+            else:
+                time.sleep(0.005)                 # camera hiccup, back off briefly
 
     def read(self):
+        """Return a copy of the newest frame, or None if nothing has arrived yet."""
         with self.lock:
-            if self.frame is not None:
-                return self.ret, self.frame.copy()
-            return self.ret, None
+            if self.latest_frame is None:
+                return None
+            return self.latest_frame.copy()
 
     def release(self):
         self.running = False
         time.sleep(0.1)
-        if self.cap.isOpened():
-            self.cap.release()
+        if self.capture.isOpened():
+            self.capture.release()

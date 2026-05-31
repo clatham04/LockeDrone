@@ -1,53 +1,59 @@
-from ultralytics import YOLO
+"""Person detection with a YOLO model (ncnn folder on the Pi, or a .pt for testing).
+
+Two plain functions: load the model once, then call detect_person each frame.
+"""
 from pathlib import Path
+
 import numpy as np
+import yaml
+from ultralytics import YOLO
 
-class HumanDetector:
-    """Handles initialization and prediction optimized for Raspberry Pi CPU execution."""
-    def __init__(self, model_path="yolo11n_ncnn_model", device="cpu"):
-        # Note: 'yolo11n_ncnn_model' is a compiled directory format (holding
-        # model.ncnn.param + model.ncnn.bin) that leverages ARM NEON instructions
-        # natively on the Pi 4B CPU.
-        #
-        # Resolve to an absolute path relative to the repo root (one level up from
-        # this file) so it works no matter which directory you launch from. Without
-        # this, Ultralytics silently falls back to downloading yolo11n.pt when the
-        # relative path isn't found from the current working directory.
-        model_dir = Path(model_path)
-        if not model_dir.is_absolute():
-            model_dir = (Path(__file__).resolve().parent.parent / model_path)
-        if not model_dir.exists():
-            raise FileNotFoundError(f"NCNN model not found at: {model_dir}")
+# Repo root = one level up from this file (the folder that holds yolo11n_ncnn_model/).
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
-        self.model = YOLO(str(model_dir), task="detect")
-        self.device = device
 
-    def detect_primary_target(self, frame, conf_threshold=0.40, imgsz=256):
-        """
-        Runs highly optimized inference on ARM architecture.
-        Returns: (x1, y1, x2, y2, confidence) or None if no target found.
-        """
-        # Lowering default imgsz to 256 yields a vast speedup while retaining target identification
-        results = self.model(
-            frame, 
-            conf=conf_threshold, 
-            classes=[0], 
-            verbose=False, 
-            imgsz=imgsz, 
-            device=self.device
-        )
-        
-        boxes = results[0].boxes
+def load_model(model_dir):
+    """Load a YOLO model and report the size it was exported at.
 
-        if boxes is not None and len(boxes) > 0:
-            # Handle native Tensor format or Numpy arrays cleanly without breaking CPU memory
-            confs = boxes.conf.cpu().numpy() if hasattr(boxes.conf, 'cpu') else boxes.conf
-            best_idx = int(np.argmax(confs))
-            
-            xyxy = boxes.xyxy.cpu().numpy() if hasattr(boxes.xyxy, 'cpu') else boxes.xyxy
-            x1, y1, x2, y2 = map(int, xyxy[best_idx])
-            conf = float(confs[best_idx])
-            
-            return x1, y1, x2, y2, conf
-            
+    Returns (model, native_size). `native_size` is the input resolution baked into
+    an ncnn export (read from its metadata.yaml), or None for a .pt file. The path
+    is resolved against the repo root, so it works no matter which directory you
+    launch from — and we never silently fall back to downloading weights.
+    """
+    path = Path(model_dir)
+    if not path.is_absolute():
+        path = REPO_ROOT / model_dir
+    if not path.exists():
+        raise FileNotFoundError(f"Model not found at: {path}")
+
+    native_size = None
+    meta = path / "metadata.yaml"
+    if path.is_dir() and meta.exists():
+        info = yaml.safe_load(meta.read_text())
+        size = info.get("imgsz")
+        native_size = size[0] if isinstance(size, (list, tuple)) else size
+
+    return YOLO(str(path), task="detect"), native_size
+
+
+def detect_person(model, frame, conf, imgsz, device, person_class=0):
+    """Run inference and return the most confident person box.
+
+    Returns (x1, y1, x2, y2, confidence) or None if no person is found.
+    """
+    results = model(
+        frame,
+        conf=conf,
+        classes=[person_class],
+        imgsz=imgsz,
+        device=device,
+        verbose=False,
+    )
+    boxes = results[0].boxes
+    if boxes is None or len(boxes) == 0:
         return None
+
+    confs = boxes.conf.cpu().numpy()
+    best = int(np.argmax(confs))
+    x1, y1, x2, y2 = (int(v) for v in boxes.xyxy[best].cpu().numpy())
+    return x1, y1, x2, y2, float(confs[best])
