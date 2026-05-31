@@ -10,6 +10,15 @@ The software architecture is engineered exclusively for deployment on **Linux-ba
 
 Before executing the tracking software on the drone, your Linux environment must be populated with the correct lightweight computer vision and machine learning frameworks.
 
+
+## How to Run the pi code.
+
+update and get the code by using git pull
+then install all the dependencies by using pip install -r requirements.txt
+the install the models with fit configs by using python export_model.py
+then run the code by using python human_lock.py
+
+
 ### Python Requirements Configuration (`requirements.txt`)
 Save the following configuration into a file named `requirements.txt` in your project root folder:
 
