@@ -24,9 +24,18 @@ Grade = 94%
 # Todo by sunday 5/31/2026
 - [x] Fix Documentation errors.
 - [x] Mkae assist list, md file should be all the cuurent stuff you have, Ask jacob for specs on camera, and pi.
-- [] Remove stuff we dont need on requirements.txt
-- [] Make detection 10FPS.
-- [] Make the camera detect human and the red dot at human head.
-- [] Figuere out weight of the system to fit to drone.
-- [] Edit code to ahve good names, not just main_test.py
- 
+- [-] Remove stuff we dont need on requirements.txt
+- [-] Make detection 10FPS.
+- [x] Make the camera detect human and the red dot at human head.
+- [x] Figuere out weight of the system to fit to drone.
+- [x] Edit code to have good names, not just main_test.py
+Grade = 80%
+
+# Todo by sunday 6/9/2026
+- [] Fix Documentation errors.
+- [] Clean out the code and make it more readable.
+- [] Build giroscope for the drone.
+- [] Find out if you can use controller signals to fly the drone, and not modefy the signals of the drone.
+- [] Make flight control code. (This is just for hovering.)
+
+
