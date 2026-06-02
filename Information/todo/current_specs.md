@@ -1,7 +1,31 @@
-# drone specs #
+###### drone specs ######
 
-DIY Drone Kit with Brushless Motor & Dual Camera ($70 on Amazon)
+### DIY Drone Kit with Brushless Motor & Dual Camera ($70 on Amazon) ###
+## 1. Structural & Frame Components
+* **Carbon Fiber (CF) Support Rods** *High-strength, ultra-lightweight structural rods that form the rigid framework for the drone arms.*
+* **3D-Printed Custom Frame Pieces** *Molded chassis components and snap-fit mounting bosses designed to house the delicate electronic boards and secure the battery.*
+* **Assembly Hardware Pack** *A comprehensive assortment of small mounting screws and pins required to lock the frame, arms, and motor mounts together.*
 
+## 2. Power & Propulsion
+* **Brushless Motors (x4)** *High-efficiency, long-lasting electromagnets (2 Clockwise, 2 Counter-Clockwise) that provide robust wind resistance and flight power.*
+* **Flight Propeller Blades** *Aerodynamically optimized rotor blades designed to generate maximum lift and stable thrust.*
+* **Spare Propeller Set** *An extra set of backup flight blades for quick field replacements following accidental crashes.*
+
+## 3. Electronics & Vision Systems
+* **Main Flight Controller (FC) Board** *The central processing brain of the quadcopter, featuring integrated gyroscopes and stabilization algorithms to regulate flight.*
+* **Optical Flow Sensor Module** *A dedicated downward-facing sensor array that tracks terrain patterns to enable automatic, GPS-free indoor hovering.*
+* **Dual Camera System** *A Wi-Fi-enabled dual-lens setup consisting of an adjustable front-facing lens and a secondary vertical downward lens for real-time video transmission.*
+* **Orientation LED Strips** *Bright navigational accent lights that help the pilot distinguish the front from the back of the aircraft during flight.*
+
+## 4. Control, Power, & Charging
+* **Handheld Remote Controller** *A wireless multi-channel transmitter featuring intuitive joysticks, stunt triggers (360° flips), and one-click takeoff/landing controls.*
+* **AA Batteries (For Controller)** *Included power cells to operationalize the remote transmitter immediately out of the box.*
+* **Modular Lithium-Polymer (LiPo) Batteries (x2)** *High-capacity, rechargeable drone batteries that swap out easily to deliver up to 30 minutes of cumulative flight time.*
+* **Dual USB Charging Cables (x2)** *A set of independent USB chargers allowing both LiPo flight batteries to be charged simultaneously.*
+
+## 5. Documentation & Educational Resources
+* **STEM Manual & Assembly Guide** *A step-by-step illustrated assembly booklet interspersed with theory lessons on aerodynamics, aviation history, and quadrotor mechanics.*
+* **Digital Educator Materials** *Access links to editable PowerPoint presentation slides designed for classroom teachers or parents running a structured STEM 
 
 # Signal Jammer: #
 Radio layer
