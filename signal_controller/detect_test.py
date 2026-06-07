@@ -17,6 +17,7 @@ one address out wlan0 first:
 import os
 import subprocess
 import sys
+import threading
 import time
 
 import cv2
@@ -52,7 +53,7 @@ def load_model():
     print("[DET] ncnn model missing/incomplete — using yolo11n.pt (slower).")
     print("      For ncnn speed, regenerate it (on HOME wifi, for internet):")
     print("      cd ~/LockeDrone && python3 'Human Detection/export_model.py'")
-    return YOLO(os.path.join(ROOT, "yolo11n.pt")), 320
+    return YOLO(os.path.join(ROOT, "yolo11n.pt")), 192   # small input so the .pt isn't unbearable
 
 
 def ensure_route_and_reachable():
@@ -66,6 +67,32 @@ def ensure_route_and_reachable():
     r = subprocess.run(["ping", "-I", "wlan0", "-c", "1", "-W", "2", "192.168.1.1"],
                        capture_output=True)
     return r.returncode == 0
+
+
+class LatestFrame:
+    """Background grabber that always holds the NEWEST frame, dropping the backlog.
+
+    RTSP buffers frames; if YOLO is slower than the stream, that buffer fills and you
+    watch seconds-old video (the "lag"). This thread reads + discards continuously so we
+    always process the latest frame: low FPS, but live, not delayed.
+    """
+    def __init__(self, cap):
+        self.cap = cap
+        self.frame = None
+        self.running = True
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        while self.running:
+            ok, f = self.cap.read()
+            if ok:
+                self.frame = f
+
+    def read(self):
+        return self.frame
+
+    def stop(self):
+        self.running = False
 
 
 def annotate(frame, boxes):
@@ -108,13 +135,15 @@ def main():
         writer = cv2.VideoWriter(OUT_VIDEO, cv2.VideoWriter_fourcc(*"mp4v"), 15, (w, h))
         print(f"[DET] no display — saving {seconds}s to {OUT_VIDEO} (run from the desktop for a live window).")
 
+    grabber = LatestFrame(cap)
     t0 = time.time()
     frames = 0
     last = None
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok:
+            frame = grabber.read()
+            if frame is None:
+                time.sleep(0.01)
                 continue
             results = model(frame, conf=CONF, classes=[PERSON_CLASS], imgsz=imgsz, verbose=False)
             annotate(frame, results[0].boxes)
@@ -134,6 +163,7 @@ def main():
     except KeyboardInterrupt:
         print("\n[DET] stopped.")
     finally:
+        grabber.stop()
         if writer:
             writer.release()
         cap.release()
