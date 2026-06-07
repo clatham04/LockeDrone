@@ -1,23 +1,27 @@
 r"""fly.py — autonomous takeoff + hover (the base layer for future autonomy).
 
-Sequence: gyro-calibrate (flat & still) -> gentle takeoff -> hover until Ctrl+C (land).
+Sequence: gyro-calibrate (flat & still) -> one-key takeoff (trim applied) -> hover
+until Ctrl+C (land).
 
 EXTENSIBLE: the hover loop asks `controller(state)` for the four stick values each
-tick. Default holds center. Future human-follow code supplies its own controller:
+tick. Default holds center. Future human-follow supplies its own controller:
     import fly ; fly.run(controller=my_follow_controller)
 
-============================ TUNING (edit these) ============================
-LEFT/RIGHT DRIFT: if it always slides one way, that's a trim issue, not random drift.
-  ROLL_TRIM  +leans RIGHT (cancels a LEFT slide).  PITCH_TRIM +leans FORWARD.
-TAKEOFF too fast: the drone's one-key auto-takeoff ignores throttle while climbing,
-  so we ramp throttle up ourselves (MANUAL_TAKEOFF). If the motors WON'T spin that
-  way (some firmwares only arm via one-key), set MANUAL_TAKEOFF=False — but then the
-  climb is the drone's aggressive auto one, so use a tall space.
-=============================================================================
+========================= TUNING (edit these) =========================
+LEFT/RIGHT DRIFT (it always slides one way) — a trim issue, not random drift:
+    ROLL_TRIM   + leans RIGHT (cancels a LEFT slide).   try 8 -> 14 -> 18...
+    PITCH_TRIM  + leans FORWARD (cancels a BACKWARD slide).
+Also CALIBRATE on a genuinely flat, level floor — a consistent slide usually means
+the drone learned a tilted "level".
+
+TAKEOFF: this drone only arms via the one-key command, and its auto-takeoff climbs
+fast (firmware — we can't slow it). Give it ceiling room. We layer the trim on during
+liftoff so it fights the side-drift as early as the drone will accept it.
+=======================================================================
 
 HONEST LIMIT: without a downward camera + floor marker, "hold" leans on the drone's
-own optical flow, which drifts. Fly in OPEN SPACE. Ctrl+C lands; `wifi_control.py
-stop` is the kill switch.
+own optical flow, which drifts. Fly in OPEN SPACE. Ctrl+C lands; in another terminal
+`sudo python3 signal_controller/wifi_control.py stop` is the kill switch.
 
     sudo python3 signal_controller/fly.py
 """
@@ -31,26 +35,20 @@ RATE_HZ = 25
 PERIOD = 1.0 / RATE_HZ
 
 # --- tuning ---
-ROLL_TRIM = 8          # + = lean RIGHT to cancel a LEFT slide. start ~8, raise if still left.
-PITCH_TRIM = 0         # + = lean FORWARD to cancel a BACKWARD slide.
-
-MANUAL_TAKEOFF = True              # ramp throttle ourselves (gentle). False = one-key (aggressive).
-MANUAL_TAKEOFF_THROTTLE = 165      # peak throttle during the gentle ramp (raise if it won't lift)
-MANUAL_TAKEOFF_SECONDS = 2.5       # ramp duration (longer = slower, gentler climb)
-
+ROLL_TRIM = 8          # + leans RIGHT to cancel a LEFT slide
+PITCH_TRIM = 0         # + leans FORWARD to cancel a BACKWARD slide
 CALIBRATE_SECONDS = 1.5
-ONEKEY_SETTLE_THROTTLE = 70        # used only if MANUAL_TAKEOFF=False
-ONEKEY_SETTLE_SECONDS = 1.5
+TAKEOFF_PULSE_SECONDS = 0.4    # how long to hold the one-key takeoff command
 
 
 def _clamp(v):
     return max(LO, min(HI, int(v)))
 
 
-def send_trimmed(roll=CENTER, pitch=CENTER, throttle=CENTER, yaw=CENTER):
-    """Send sticks with the drift trim applied (so trim helps takeoff AND hover)."""
+def send_trimmed(roll=CENTER, pitch=CENTER, throttle=CENTER, yaw=CENTER, flags1=0):
+    """Send sticks with drift trim applied (so trim helps takeoff AND hover)."""
     wc.send(roll=_clamp(roll + ROLL_TRIM), pitch=_clamp(pitch + PITCH_TRIM),
-            throttle=_clamp(throttle), yaw=_clamp(yaw))
+            throttle=_clamp(throttle), yaw=_clamp(yaw), flags1=flags1)
 
 
 def hover_controller(state):
@@ -65,7 +63,7 @@ def _pulse(seconds, **kw):
 
 
 def calibrate():
-    print("[FLY] Put the drone FLAT and STILL on a LEVEL surface. Calibrating in 3s...")
+    print("[FLY] Put the drone FLAT and STILL on a LEVEL floor. Calibrating in 3s...")
     time.sleep(3)
     print("[FLY] calibrating gyro...")
     _pulse(CALIBRATE_SECONDS, flags1=wc.F1_CALIBRATE)
@@ -74,20 +72,12 @@ def calibrate():
 
 
 def takeoff():
-    if MANUAL_TAKEOFF:
-        print("[FLY] manual takeoff — ramping throttle gently (with trim)...")
-        ticks = int(RATE_HZ * MANUAL_TAKEOFF_SECONDS)
-        for i in range(ticks):
-            thr = CENTER + (MANUAL_TAKEOFF_THROTTLE - CENTER) * (i + 1) / ticks
-            send_trimmed(throttle=thr)
-            time.sleep(PERIOD)
-        print("[FLY] airborne (if motors spun) — holding.")
-        print("      If it did NOT lift, set MANUAL_TAKEOFF=False (or raise MANUAL_TAKEOFF_THROTTLE).")
-    else:
-        print("[FLY] one-key takeoff (aggressive — needs a tall space)...")
-        _pulse(0.3, flags1=wc.F1_ONEKEY)
-        _pulse(ONEKEY_SETTLE_SECONDS, throttle=ONEKEY_SETTLE_THROTTLE)
-    print("[FLY] hovering — holding position. Ctrl+C to land.")
+    print("[FLY] one-key takeoff (trim applied during liftoff)...")
+    # one-key arms + auto-takeoffs; layer the trim on in case the drone honors it
+    for _ in range(int(RATE_HZ * TAKEOFF_PULSE_SECONDS)):
+        send_trimmed(flags1=wc.F1_ONEKEY)
+        time.sleep(PERIOD)
+    print("[FLY] hovering — holding with trim. Ctrl+C to land.")
 
 
 def land():
