@@ -1,67 +1,104 @@
-"""wifi_control.py — control the FLOW-UFO drone over Wi-Fi (UDP).
+r"""wifi_control.py — control the FLOW-UFO drone over Wi-Fi (UDP).
 
-The drone is a WiFi_UFO / FLOW-UFO family quad. Control is a 14-byte UDP packet
-sent ~every 40 ms. Packet format (decoded from the WiFi_UFO protocol):
+Ported from the working WiFi_UFO protocol (github.com/LukasMaly/wifi-ufo-drone).
+The key insight: the drone needs a constant HEARTBEAT to keep the control link
+alive before it will accept any control packets. That's why sending control blind
+did nothing.
 
-    cc 5a 01 83 09 66 | RR PP TT YY | FF | XX | 99 74
-    \---- header ----/   \channels/  flag csum \footer/
+Link (edit to match your network):
+    drone   192.168.1.1   via wlan0
+    TCP heartbeat -> drone:7060    bare SYNs ~20 Hz   (needs scapy + root)
+    UDP heartbeat -> drone:40000   [63 63 01 00 00 00 00] @ 1 Hz
+    UDP control   -> drone:40000   15-byte packet ~20 Hz
 
-    RR roll, PP pitch, TT throttle, YY yaw   (0x80 = center)
-    FF flags (takeoff/land/etc.)
-    XX checksum = RR ^ PP ^ TT ^ YY ^ FF
+Control packet:
+    63 63 0a 00 00 08 00 66 | RR PP TT YY | MM | XX | 99
+    RR roll, PP pitch, TT throttle (0=off, 128=hover), YY yaw   (128 = center)
+    MM mode: 0 none, 1 take off, 2 land, 4 stop
+    XX checksum = RR ^ PP ^ TT ^ YY ^ MM
 
-SAFETY: run with no arguments and it ONLY sends the IDLE packet (all centers, no
-takeoff) — on an altitude-hold drone that keeps the motors OFF on the ground, just
-like the app sitting idle. Takeoff/flight are separate, explicit actions. Secure
-the drone anyway, since the props are on and we're confirming an inferred protocol.
+SAFETY: running it plain only starts the heartbeat and holds IDLE (throttle 0,
+mode 0) — no takeoff. Secure the drone anyway (props on). Takeoff is a separate,
+explicit command we add once the link is confirmed.
 
-    python wifi_control.py            # idle only (safe) — watch the drone's LED
+    sudo python wifi_control.py          # link + idle, watch the LED  (sudo for scapy)
 """
+import random
 import socket
+import threading
 import time
 
+# TCP heartbeat needs raw SYNs (scapy). Degrade gracefully to UDP-only if missing.
+try:
+    from scapy.all import IP, TCP, sr1
+    HAVE_SCAPY = True
+except ImportError:
+    HAVE_SCAPY = False
+
 DRONE_IP = "192.168.1.1"
-DRONE_PORT = 7080                    # WiFi_UFO control port (adjust if recon says otherwise)
+IFACE = "wlan0"
+TCP_PORT = 7060
+UDP_PORT = 40000
 
-HEADER = bytes([0xCC, 0x5A, 0x01, 0x83, 0x09, 0x66])
-FOOTER = bytes([0x99, 0x74])
-CENTER = 0x80
+UDP_HEARTBEAT = bytes([0x63, 0x63, 0x01, 0x00, 0x00, 0x00, 0x00])
+FLY_TEMPLATE = bytearray([0x63, 0x63, 0x0A, 0x00, 0x00, 0x08, 0x00, 0x66,
+                          0x80, 0x80, 0x80, 0x80, 0x00, 0x00, 0x99])
 
-# Flag bits (to be confirmed by capture before we ever use takeoff):
-FLAG_NONE = 0x00
-
-
-def build_packet(roll=CENTER, pitch=CENTER, throttle=CENTER, yaw=CENTER, flags=FLAG_NONE):
-    body = bytes([roll, pitch, throttle, yaw, flags])
-    checksum = 0
-    for b in body:
-        checksum ^= b
-    return HEADER + body + bytes([checksum]) + FOOTER
+_running = True
+_udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 
-def stream(packet, label, hz=25):
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    period = 1.0 / hz
-    print(f"Sending {label} to {DRONE_IP}:{DRONE_PORT} at {hz} Hz. Ctrl+C to stop.")
-    print(f"packet = {packet.hex()}")
-    sent = 0
-    try:
-        while True:
-            sock.sendto(packet, (DRONE_IP, DRONE_PORT))
-            sent += 1
-            if sent % hz == 0:
-                print(f"  ...{sent} packets sent")
-            time.sleep(period)
-    except KeyboardInterrupt:
-        print(f"\nStopped after {sent} packets.")
-    finally:
-        sock.close()
+def build_cmd(roll=128, pitch=128, throttle=0, yaw=128, mode=0):
+    p = FLY_TEMPLATE[:]
+    p[8], p[9], p[10], p[11], p[12] = roll, pitch, throttle, yaw, mode
+    p[13] = p[8] ^ p[9] ^ p[10] ^ p[11] ^ p[12]      # checksum over the 5 data bytes
+    return bytes(p)
+
+
+def cmd(roll=128, pitch=128, throttle=0, yaw=128, mode=0):
+    _udp.sendto(build_cmd(roll, pitch, throttle, yaw, mode), (DRONE_IP, UDP_PORT))
+
+
+def _tcp_heartbeat():
+    while _running:
+        syn = IP(dst=DRONE_IP, ttl=63) / TCP(sport=random.randint(32768, 49152),
+                                             dport=TCP_PORT, flags="S", seq=0)
+        sr1(syn, iface=IFACE, timeout=0.05, verbose=0)
+        time.sleep(0.05)
+
+
+def _udp_heartbeat():
+    while _running:
+        _udp.sendto(UDP_HEARTBEAT, (DRONE_IP, UDP_PORT))
+        time.sleep(1.0)
+
+
+def connect():
+    """Start the heartbeats that keep the control link alive. Call before cmd()."""
+    threading.Thread(target=_udp_heartbeat, daemon=True).start()
+    if HAVE_SCAPY:
+        threading.Thread(target=_tcp_heartbeat, daemon=True).start()
+        print(f"[WIFI] Heartbeats up — TCP {DRONE_IP}:{TCP_PORT} + UDP {DRONE_IP}:{UDP_PORT}.")
+    else:
+        print(f"[WIFI] UDP heartbeat only ({DRONE_IP}:{UDP_PORT}). "
+              f"Install scapy + run as sudo for the TCP heartbeat if the drone ignores us.")
 
 
 def main():
-    # IDLE ONLY: centered sticks, no takeoff flag -> motors stay off on the ground.
-    idle = build_packet()
-    stream(idle, "IDLE packet (no takeoff — motors stay off)")
+    connect()
+    print("[WIFI] Holding IDLE (throttle 0, no takeoff). Watch the drone's LED. Ctrl+C to stop.")
+    global _running
+    sent = 0
+    try:
+        while True:
+            cmd()                          # idle: centered, throttle 0, mode 0 -> motors off
+            sent += 1
+            if sent % 20 == 0:
+                print(f"  ...{sent} control packets (idle)")
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        _running = False
+        print(f"\n[WIFI] Stopped after {sent} idle packets.")
 
 
 if __name__ == "__main__":
