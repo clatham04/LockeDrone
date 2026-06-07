@@ -36,10 +36,10 @@ PERIOD = 1.0 / RATE_HZ
 
 # --- tuning ---
 ROLL_TRIM = 9          # + leans RIGHT to cancel a LEFT slide
-PITCH_TRIM = 0         # + leans FORWARD to cancel a BACKWARD slide
+PITCH_TRIM = -8        # - leans BACK to cancel a FORWARD slide (flip sign if it worsens)
 CALIBRATE_SECONDS = 1.5
 TAKEOFF_PULSE_SECONDS = 0.4    # how long to hold the one-key takeoff command
-HOVER_DESCEND_THROTTLE = 95    # after takeoff, drop to a lower hover (LOWER = drops more)
+HOVER_DESCEND_THROTTLE = 60    # after takeoff, drop to a lower hover (LOWER = drops more)
 HOVER_DESCEND_SECONDS = 1.5    # how long to descend before holding
 
 
