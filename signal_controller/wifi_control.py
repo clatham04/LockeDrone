@@ -84,21 +84,74 @@ def connect():
               f"Install scapy + run as sudo for the TCP heartbeat if the drone ignores us.")
 
 
-def main():
-    connect()
-    print("[WIFI] Holding IDLE (throttle 0, no takeoff). Watch the drone's LED. Ctrl+C to stop.")
-    global _running
+def _stream(make_packet_args, label, hz=20):
+    """Stream control packets (a dict of cmd() kwargs) until Ctrl+C."""
+    print(f"[WIFI] {label}  (Ctrl+C to stop)")
     sent = 0
+    period = 1.0 / hz
     try:
         while True:
-            cmd()                          # idle: centered, throttle 0, mode 0 -> motors off
+            cmd(**make_packet_args)
             sent += 1
-            if sent % 20 == 0:
-                print(f"  ...{sent} control packets (idle)")
+            if sent % hz == 0:
+                print(f"  ...{sent}")
+            time.sleep(period)
+    except KeyboardInterrupt:
+        print(f"\n[WIFI] Stopped after {sent} packets.")
+
+
+def _send_for(seconds, **kwargs):
+    end = time.time() + seconds
+    while time.time() < end:
+        cmd(**kwargs)
+        time.sleep(0.05)
+
+
+def run_idle():
+    connect()
+    _stream({}, "IDLE — throttle 0, no takeoff (motors stay off). Watch the LED.")
+
+
+def run_takeoff():
+    connect()
+    print("\n" + "!" * 60)
+    print("!! TAKEOFF — THE MOTORS/PROPS WILL SPIN UP.")
+    print("!! SECURE THE DRONE (tape/strap it down) and keep clear.")
+    print("!! Starting in 5 seconds. Ctrl+C now to abort.")
+    print("!" * 60 + "\n")
+    time.sleep(5)
+    global _running
+    try:
+        print("[WIFI] takeoff...")
+        _send_for(1.0, mode=1)                 # mode 1 = take off
+        print("[WIFI] holding (altitude-hold hover). Ctrl+C to land.")
+        while True:
+            cmd(throttle=128, mode=0)          # 128 = hold altitude
             time.sleep(0.05)
     except KeyboardInterrupt:
+        print("\n[WIFI] landing + cutting motors...")
+        _send_for(1.0, mode=2)                 # land
+        _send_for(0.5, mode=4)                 # stop (hard cut)
         _running = False
-        print(f"\n[WIFI] Stopped after {sent} idle packets.")
+
+
+def run_land():
+    connect()
+    _send_for(1.5, mode=2)
+    print("[WIFI] land command sent.")
+
+
+def run_stop():
+    connect()
+    _send_for(1.0, mode=4)
+    print("[WIFI] stop (motor cut) sent.")
+
+
+def main():
+    import sys
+    mode = sys.argv[1] if len(sys.argv) > 1 else "idle"
+    {"idle": run_idle, "takeoff": run_takeoff,
+     "land": run_land, "stop": run_stop}.get(mode, run_idle)()
 
 
 if __name__ == "__main__":
