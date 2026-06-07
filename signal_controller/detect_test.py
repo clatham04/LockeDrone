@@ -34,6 +34,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                 # LockeDrone/
 LIVE = bool(os.environ.get("DISPLAY"))       # show a live window if a desktop is available
 
+# The drone's RTSP is lossy over UDP. Tell ffmpeg to DISCARD corrupt frames instead of
+# decoding them — a corrupt packet is what crashes the decoder ("malloc(): ... corrupted
+# / Aborted"). Must be set before the VideoCapture is created.
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp|fflags;discardcorrupt"
+
 
 def load_model():
     """Load the model, preferring the fast ncnn export. Returns (model, imgsz).
