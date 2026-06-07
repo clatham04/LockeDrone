@@ -45,21 +45,21 @@ def connect():
     if not radio.begin():
         raise RuntimeError("nRF24 not responding — run test_radio.py first.")
 
-    radio.set_data_rate(RF24_1MBPS)
-    radio.set_crc_length(RF24_CRC_DISABLED)        # XN297 CRC lives in the payload
-    radio.set_auto_ack(False)
-    radio.address_width = 5
-    radio.set_pa_level(RF24_PA_MAX)
-    radio.payload_size = bayang.ADDR_LEN + bayang.PACKET_SIZE + 2   # 22 bytes on air
-    radio.open_tx_pipe(_sync_address())            # fixed XN297 sync address
-    radio.stop_listening()                          # transmit mode
+    radio.setDataRate(RF24_1MBPS)
+    radio.setCRCLength(RF24_CRC_DISABLED)          # XN297 CRC lives in the payload
+    radio.setAutoAck(False)
+    radio.setAddressWidth(5)
+    radio.setPALevel(RF24_PA_MAX)
+    radio.setPayloadSize(bayang.ADDR_LEN + bayang.PACKET_SIZE + 2)   # 22 bytes on air
+    radio.openWritingPipe(_sync_address())          # fixed XN297 sync address
+    radio.stopListening()                           # transmit mode
     print("[LINK] Radio configured for Bayang/XN297.")
     return radio
 
 
 def _send(radio, channel, payload):
-    radio.channel = channel
-    radio.write(payload, multicast=True)            # no ack — one-way link
+    radio.setChannel(channel)
+    radio.write(payload)                             # auto-ack off -> no ack wait (one-way)
 
 
 def bind(radio, tx_id=TX_ID, duration_s=4.0):
@@ -91,7 +91,7 @@ def send_signal(radio, tx_id, hops, hop_index,
 
 
 def disconnect(radio):
-    radio.power_down()
+    radio.powerDown()
     print("[LINK] Radio powered down.")
 
 
