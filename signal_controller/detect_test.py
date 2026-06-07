@@ -19,12 +19,12 @@ import sys
 import time
 
 import cv2
+import yaml
 from ultralytics import YOLO
 
 RTSP = "rtsp://192.168.1.1:7070/webcam"
 CONF = 0.35
 PERSON_CLASS = 0
-IMGSZ = 320                 # smaller = faster on the Pi
 OUT_VIDEO = "detect_out.mp4"
 OUT_SNAP = "detect_snapshot.jpg"
 
@@ -33,13 +33,23 @@ ROOT = os.path.dirname(HERE)                 # LockeDrone/
 LIVE = bool(os.environ.get("DISPLAY"))       # show a live window if a desktop is available
 
 
-def find_model():
-    for cand in (os.path.join(ROOT, "yolo11n.pt"),
-                 os.path.join(ROOT, "yolo11n_ncnn_model"),
-                 "yolo11n.pt"):
-        if os.path.exists(cand):
-            return cand
-    return "yolo11n.pt"
+def load_model():
+    """Load the model, preferring the fast ncnn export. Returns (model, imgsz).
+
+    ncnn is much faster than the .pt on the Pi's ARM CPU, but it's FIXED-size: we read
+    the resolution baked into the export (metadata.yaml) and run at exactly that, or
+    ncnn throws 'malloc(): invalid size'. (Re-bake smaller for more speed via the
+    "Human Detection/export_model.py".)
+    """
+    ncnn = os.path.join(ROOT, "yolo11n_ncnn_model")
+    if os.path.isdir(ncnn):
+        meta = yaml.safe_load(open(os.path.join(ncnn, "metadata.yaml")))
+        size = meta.get("imgsz", 640)
+        imgsz = size[0] if isinstance(size, (list, tuple)) else size
+        print(f"[DET] ncnn model @ {imgsz}px (fast on ARM)")
+        return YOLO(ncnn, task="detect"), imgsz
+    print("[DET] ncnn model not found — falling back to yolo11n.pt (slower)")
+    return YOLO(os.path.join(ROOT, "yolo11n.pt")), 320
 
 
 def annotate(frame, boxes):
@@ -58,9 +68,7 @@ def annotate(frame, boxes):
 
 def main():
     seconds = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    model_path = find_model()
-    print(f"[DET] loading model: {model_path}")
-    model = YOLO(model_path, task="detect") if model_path.endswith("_ncnn_model") else YOLO(model_path)
+    model, imgsz = load_model()
 
     print(f"[DET] opening {RTSP} ...")
     cap = cv2.VideoCapture(RTSP, cv2.CAP_FFMPEG)
@@ -86,7 +94,7 @@ def main():
             ok, frame = cap.read()
             if not ok:
                 continue
-            results = model(frame, conf=CONF, classes=[PERSON_CLASS], imgsz=IMGSZ, verbose=False)
+            results = model(frame, conf=CONF, classes=[PERSON_CLASS], imgsz=imgsz, verbose=False)
             annotate(frame, results[0].boxes)
             last = frame
             frames += 1
