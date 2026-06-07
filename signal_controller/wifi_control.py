@@ -46,6 +46,9 @@ FLY_TEMPLATE = bytearray([0x63, 0x63, 0x0A, 0x00, 0x00, 0x08, 0x00, 0x66,
 
 _running = True
 _udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+# Force all traffic out wlan0 — the home network and the drone's AP both use
+# 192.168.1.x, so without this, packets leak to the home router over Ethernet.
+_udp.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, IFACE.encode())
 
 
 def build_cmd(roll=128, pitch=128, throttle=0, yaw=128, mode=0):
@@ -74,14 +77,14 @@ def _udp_heartbeat():
 
 
 def connect():
-    """Start the heartbeats that keep the control link alive. Call before cmd()."""
+    """Start the UDP heartbeat that keeps the control link alive. Call before cmd().
+
+    (TCP heartbeat is disabled for now — scapy's L3 send can't be pinned to wlan0,
+    so it would leak to the home router given the subnet collision. We'll re-add it
+    via L2 if the drone needs it.)
+    """
     threading.Thread(target=_udp_heartbeat, daemon=True).start()
-    if HAVE_SCAPY:
-        threading.Thread(target=_tcp_heartbeat, daemon=True).start()
-        print(f"[WIFI] Heartbeats up — TCP {DRONE_IP}:{TCP_PORT} + UDP {DRONE_IP}:{UDP_PORT}.")
-    else:
-        print(f"[WIFI] UDP heartbeat only ({DRONE_IP}:{UDP_PORT}). "
-              f"Install scapy + run as sudo for the TCP heartbeat if the drone ignores us.")
+    print(f"[WIFI] UDP heartbeat up on {IFACE} -> {DRONE_IP}:{UDP_PORT}.")
 
 
 def _stream(make_packet_args, label, hz=20):
