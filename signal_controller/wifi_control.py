@@ -131,6 +131,14 @@ def run_idle():
     stream("IDLE — centered, no flags (motors off). Watch the LED.")
 
 
+def run_stop():
+    """EMERGENCY motor cut — drops the drone immediately. Use if it's misbehaving."""
+    start()
+    print("[WIFI] *** EMERGENCY STOP *** cutting motors...")
+    pulse(1.0, flags1=F1_STOP)
+    print("[WIFI] stop sent.")
+
+
 def run_takeoff():
     start()
     print("\n" + "!" * 56)
@@ -151,7 +159,8 @@ def main():
     global _running
     setup()
     mode = sys.argv[1] if len(sys.argv) > 1 else "idle"
-    fn = {"idle": run_idle, "takeoff": run_takeoff, "calibrate": run_calibrate}.get(mode, run_idle)
+    fn = {"idle": run_idle, "takeoff": run_takeoff, "calibrate": run_calibrate,
+          "stop": run_stop}.get(mode, run_idle)
     try:
         fn()
     finally:
