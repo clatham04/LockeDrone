@@ -42,13 +42,15 @@ def load_model():
     "Human Detection/export_model.py".)
     """
     ncnn = os.path.join(ROOT, "yolo11n_ncnn_model")
-    if os.path.isdir(ncnn):
-        meta = yaml.safe_load(open(os.path.join(ncnn, "metadata.yaml")))
-        size = meta.get("imgsz", 640)
+    meta_path = os.path.join(ncnn, "metadata.yaml")
+    if os.path.isfile(meta_path):               # the folder must actually contain the model
+        size = yaml.safe_load(open(meta_path)).get("imgsz", 640)
         imgsz = size[0] if isinstance(size, (list, tuple)) else size
         print(f"[DET] ncnn model @ {imgsz}px (fast on ARM)")
         return YOLO(ncnn, task="detect"), imgsz
-    print("[DET] ncnn model not found — falling back to yolo11n.pt (slower)")
+    print("[DET] ncnn model missing/incomplete — using yolo11n.pt (slower).")
+    print("      For ncnn speed, regenerate it (on HOME wifi, for internet):")
+    print("      cd ~/LockeDrone && python3 'Human Detection/export_model.py'")
     return YOLO(os.path.join(ROOT, "yolo11n.pt")), 320
 
 
