@@ -35,10 +35,12 @@ RATE_HZ = 25
 PERIOD = 1.0 / RATE_HZ
 
 # --- tuning ---
-ROLL_TRIM = 8          # + leans RIGHT to cancel a LEFT slide
+ROLL_TRIM = 11         # + leans RIGHT to cancel a LEFT slide
 PITCH_TRIM = 0         # + leans FORWARD to cancel a BACKWARD slide
 CALIBRATE_SECONDS = 1.5
 TAKEOFF_PULSE_SECONDS = 0.4    # how long to hold the one-key takeoff command
+HOVER_DESCEND_THROTTLE = 110   # after takeoff, drop to a lower hover (LOWER = drops more)
+HOVER_DESCEND_SECONDS = 1.0    # how long to descend before holding
 
 
 def _clamp(v):
@@ -76,6 +78,11 @@ def takeoff():
     # one-key arms + auto-takeoffs; layer the trim on in case the drone honors it
     for _ in range(int(RATE_HZ * TAKEOFF_PULSE_SECONDS)):
         send_trimmed(flags1=wc.F1_ONEKEY)
+        time.sleep(PERIOD)
+    # the one-key takeoff altitude is a bit high — descend to a lower hover, then hold
+    print("[FLY] descending to a lower hover...")
+    for _ in range(int(RATE_HZ * HOVER_DESCEND_SECONDS)):
+        send_trimmed(throttle=HOVER_DESCEND_THROTTLE)
         time.sleep(PERIOD)
     print("[FLY] hovering — holding with trim. Ctrl+C to land.")
 
