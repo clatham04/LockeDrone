@@ -25,11 +25,13 @@ SPIN_THROTTLE = 0.12        # 0.0 - 1.0, only used if SPIN_MOTORS is True
 
 def main():
     radio = link.connect()
-    print("\n>>> Power on the drone NOW (PROPS OFF). Binding in 2s...\n")
-    time.sleep(2.0)
+    print("\n>>> Turn the drone OFF now.")
+    print(">>> Binding starts in 3s — power the drone ON the moment you see 'Binding'.")
+    print(">>> (Toy drones only accept a bind right after power-up.)\n")
+    time.sleep(3.0)
 
     tx_id = link.TX_ID
-    hops = link.bind(radio, tx_id, duration_s=4.0)
+    hops = link.bind(radio, tx_id, duration_s=12.0)   # long window so you can power-cycle during it
 
     thr = link.throttle(SPIN_THROTTLE) if SPIN_MOTORS else bayang.STICK_MIN
     neutral = bayang.STICK_CENTER
