@@ -15,6 +15,7 @@ one address out wlan0 first:
     sudo ip route del 192.168.1.1/32 dev wlan0   # undo after
 """
 import os
+import subprocess
 import sys
 import time
 
@@ -54,6 +55,19 @@ def load_model():
     return YOLO(os.path.join(ROOT, "yolo11n.pt")), 320
 
 
+def ensure_route_and_reachable():
+    """Force the drone's IP out wlan0 (home/drone subnet collision) and confirm it answers.
+
+    Needs root for the route add — you're running as root, so this just works and saves
+    you the manual 'ip route add' every time.
+    """
+    subprocess.run(["ip", "route", "add", "192.168.1.1/32", "dev", "wlan0"],
+                   capture_output=True)                 # "File exists" if already set = fine
+    r = subprocess.run(["ping", "-I", "wlan0", "-c", "1", "-W", "2", "192.168.1.1"],
+                       capture_output=True)
+    return r.returncode == 0
+
+
 def annotate(frame, boxes):
     n = 0
     for box in boxes:
@@ -71,6 +85,12 @@ def annotate(frame, boxes):
 def main():
     seconds = int(sys.argv[1]) if len(sys.argv) > 1 else 20
     model, imgsz = load_model()
+
+    print("[DET] setting drone route + checking reachability...")
+    if not ensure_route_and_reachable():
+        print("[DET] can't reach the drone at 192.168.1.1 via wlan0.")
+        print("      Check: drone ON?  on FLOW-UFO wifi (run: iwgetid)?  phone disconnected?")
+        return
 
     print(f"[DET] opening {RTSP} ...")
     cap = cv2.VideoCapture(RTSP, cv2.CAP_FFMPEG)
