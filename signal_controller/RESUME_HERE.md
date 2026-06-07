@@ -33,7 +33,19 @@ Your **home network (pfSense) and the drone BOTH use `192.168.1.x`** — a colli
 
 ---
 
-## ✅ Tomorrow's plan: capture the handshake
+## 🌟 BETTER lead (try this FIRST): decompile the app — no Linux, no capture
+The TCP 7070 handshake is written *in the app's code*. The drone is a **Lewei "UFO" family**
+app (`com.lewei.*`); the "DIY Drone" app you use is one of them. Read the code instead of sniffing:
+1. Download the drone's **Android APK** (Android version decompiles easily; same protocol as your iOS app).
+2. Open it in **jadx** (free Java decompiler) on the Windows PC.
+3. Search for `7070` / socket `connect` → the handshake bytes are right there.
+4. Paste the relevant code to Claude → it becomes our `wifi_control.py`.
+This is how turbodrone got its protocols. **All software on Windows — no monitor mode, no live USB.**
+(Claude can help find the exact APK and read the decompiled code.)
+
+---
+
+## ✅ Fallback plan: capture the handshake (needs monitor-mode WiFi)
 
 > **Capture device:** your ASUS **B650E MAX GAMING WIFI** desktop has onboard **WiFi 6E** (Intel AX210 or MediaTek MT7922 — both do monitor mode on Linux). So the desktop IS the capture device, free.
 >
