@@ -25,6 +25,11 @@ DECAY = 14                  # recenter speed per tick when the key is released
 RATE_HZ = 25
 PERIOD = 1.0 / RATE_HZ
 
+# The one-key auto-takeoff climbs hard to a default height. Right after firing it,
+# we push throttle below center for a moment to arrest that climb and settle low.
+TAKEOFF_SETTLE_THROTTLE = 90      # < 128 = descend (lower = stops climb harder)
+TAKEOFF_SETTLE_SECONDS = 1.5      # how long to hold the descend after takeoff
+
 
 def _clamp(v):
     return max(LO, min(HI, int(v)))
@@ -87,9 +92,20 @@ def main(stdscr):
             return
         if "t" in chars:
             flying = not flying
-            stdscr.addstr(4, 0, f"{'TAKEOFF' if flying else 'LAND'} ...                    ")
-            stdscr.refresh()
-            _pulse(wc.F1_ONEKEY)
+            if flying:
+                stdscr.addstr(4, 0, "TAKEOFF (gentle — settling low)...     ")
+                stdscr.refresh()
+                _pulse(wc.F1_ONEKEY)                       # fire auto-takeoff
+                # immediately fight the auto-climb so it stays low
+                for _ in range(int(RATE_HZ * TAKEOFF_SETTLE_SECONDS)):
+                    wc.send(throttle=TAKEOFF_SETTLE_THROTTLE)
+                    time.sleep(PERIOD)
+                throttle = CENTER                          # then hold this low altitude
+            else:
+                stdscr.addstr(4, 0, "LAND ...                               ")
+                stdscr.refresh()
+                _pulse(wc.F1_ONEKEY)
+                throttle = CENTER
 
         # --- movement: held key pushes the stick, released axis recenters ---
         def axis(neg, pos, val):
