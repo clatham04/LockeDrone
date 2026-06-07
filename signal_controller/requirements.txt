@@ -1,9 +1,12 @@
 # signal_controller — Python dependencies
 # Install on the Raspberry Pi:  pip install -r requirements.txt
 
-# --- RF link (needed now) ---
-pyrf24                  # nRF24L01+ driver over SPI — used by test_radio.py and drone_link.py
+# Core flight control (signals_control.py / wifi_control.py / wifi_connect.py) needs
+# NO external packages — just the Python standard library + NetworkManager (nmcli).
 
-# --- Anti-drift camera loop (coming next) ---
-opencv-contrib-python   # camera + ArUco marker tracking for true position hold
-numpy                   # math for the control loop
+# --- Camera (camera_feed.py: the drone's forward RTSP video) ---
+opencv-python           # cv2 — pull/decode the RTSP stream
+
+# --- Future: human-follow behavior (downward camera + YOLO) ---
+# ultralytics           # YOLO person detection
+# numpy
