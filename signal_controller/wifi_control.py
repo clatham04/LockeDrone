@@ -50,9 +50,19 @@ def _iface_ip(iface):
 
 
 def setup():
-    """Open the UDP socket, bound to wlan0's IP (dodges the home/drone subnet clash)."""
+    """Open the UDP socket pinned to wlan0 so traffic can't leak to Ethernet/home.
+
+    Two locks, so eth0 and wlan0 can NEVER mix:
+      1. SO_BINDTODEVICE = wlan0 (hard interface lock; needs root, skipped if not).
+      2. bind() to wlan0's own IP (forces egress wlan0 even without root).
+    Home network and drone both use 192.168.1.x, so this is essential.
+    """
     global _sock
     _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        _sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, IFACE.encode())
+    except (PermissionError, OSError):
+        pass  # not root — the IP bind below still pins us to wlan0
     _sock.bind((_iface_ip(IFACE), 0))
 
 
