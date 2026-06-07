@@ -27,6 +27,7 @@ from ultralytics import YOLO
 RTSP = "rtsp://192.168.1.1:7070/webcam"
 CONF = 0.35
 PERSON_CLASS = 0
+DETECT_EVERY = 2           # run YOLO every Nth frame — frees CPU so the decoder isn't starved
 OUT_VIDEO = "detect_out.mp4"
 OUT_SNAP = "detect_snapshot.jpg"
 
@@ -37,7 +38,9 @@ LIVE = bool(os.environ.get("DISPLAY"))       # show a live window if a desktop i
 # The drone's RTSP is lossy over UDP. Tell ffmpeg to DISCARD corrupt frames instead of
 # decoding them — a corrupt packet is what crashes the decoder ("malloc(): ... corrupted
 # / Aborted"). Must be set before the VideoCapture is created.
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;udp|fflags;discardcorrupt"
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+    "rtsp_transport;udp|buffer_size;1048576|max_delay;500000|fflags;discardcorrupt"
+)  # big receive buffer survives CPU-busy moments; discard corrupt frames
 
 
 def load_model():
@@ -144,16 +147,20 @@ def main():
     t0 = time.time()
     frames = 0
     last = None
+    last_boxes = []
     try:
         while True:
             frame = grabber.read()
             if frame is None:
                 time.sleep(0.01)
                 continue
-            results = model(frame, conf=CONF, classes=[PERSON_CLASS], imgsz=imgsz, verbose=False)
-            annotate(frame, results[0].boxes)
-            last = frame
             frames += 1
+            # only run YOLO every Nth frame; reuse the last boxes in between (saves CPU)
+            if frames % DETECT_EVERY == 0:
+                results = model(frame, conf=CONF, classes=[PERSON_CLASS], imgsz=imgsz, verbose=False)
+                last_boxes = results[0].boxes
+            annotate(frame, last_boxes)
+            last = frame
 
             if LIVE:
                 cv2.imshow("Drone Detection (press q to quit)", frame)
