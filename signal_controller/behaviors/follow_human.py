@@ -10,7 +10,8 @@ into the four sticks. Goals, in the user's words:
   - Follow where they go. YAW turns to keep them centred; PITCH moves in/out to hold
     distance. Walk away -> box shrinks -> move closer. Stand still -> no error -> HOVER.
   - Stay low + reachable. Altitude pushes are small and bounded.
-  - Safe by default. No person, stale detection, or no frame yet -> HOVER. Never flies off.
+  - Search when lost. No person / stale detection / no frame yet -> spin slowly IN PLACE
+    (yaw only, no drift) until someone comes into view, then lock on. Never flies off.
 
 Detection (YOLO, ~8 FPS) runs in its OWN thread; the 25 Hz control loop just reads the
 latest box, so flight stays smooth and a video glitch simply -> hover.
@@ -56,7 +57,8 @@ DEFAULTS = {
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
-    "stale_s": 0.8,           # detection older than this -> hover
+    "stale_s": 0.8,           # detection older than this -> treat as lost
+    "search_yaw": 18,         # no person -> spin slowly in place at this yaw to search (sign = direction)
 }
 
 # module state: detector thread writes _latest, control loop reads it
@@ -145,9 +147,10 @@ def controller(state):
     with _lock:
         det = _latest
 
-    # Safety: nothing detected, or detection went stale -> HOVER. Never drift/fly off.
+    # Lost: nothing detected / stale -> SEARCH by spinning slowly in place (yaw only, no
+    # forward/up drift, so it stays safe). It'll lock on the moment someone comes into view.
     if det is None or (time.time() - det["ts"]) > _cfg["stale_s"]:
-        return CENTER, CENTER, CENTER, CENTER
+        return CENTER, CENTER, CENTER, _stick(_cfg["search_yaw"], _cfg["max_yaw"])
 
     dz = _cfg["deadzone"]
 

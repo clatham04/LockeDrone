@@ -55,7 +55,8 @@ Kill switch (deliberate motor cut): `sudo python3 wifi_control.py stop`
 `config.json` ships with `active_behavior: "follow_human"`. Run `sudo python3
 signals_control.py` and after takeoff the drone tracks the largest person it sees:
 - **Yaw** turns to keep you centered. **Pitch** holds follow distance. **Throttle**
-  keeps it level with your head. **No person / lost you → it hovers** (never flies off).
+  keeps it level with your head. **No person / lost you → it spins slowly in place to
+  search** until someone appears, then locks on (never flies off).
 - **It won't run into you:** if you fill the frame / your whole body no longer fits, it
   backs off. Stand still and it holds position.
 
