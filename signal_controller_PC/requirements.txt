@@ -1,0 +1,10 @@
+# signal_controller_PC — Python dependencies
+# Install in your virtual environment:  pip install -r requirements.txt
+
+# --- Camera (drone_camera.py / detect_test.py) ---
+opencv-python           # cv2 — pull/decode the RTSP stream
+numpy                   # frame buffer handling
+
+# --- Human detection (detect_test.py) ---
+ultralytics             # YOLO person detection
+pyyaml                  # read model metadata.yaml
