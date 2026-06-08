@@ -1,11 +1,12 @@
-# signal_controller_windows — drone camera detection on a Windows PC
+# signal_controller_windows_test — drone camera detection on a Windows PC
 
 Run the forward-camera person detection on **Windows** (bigger, smoother view than the
 Pi's remote desktop). No flying — this is just the detection preview.
 
 > The Pi version lives in [`../signal_controller/`](../signal_controller/). This folder is
-> the same idea with the Linux-only bits (the `wlan0` route, `ip`/`ping -I`) removed and
-> the `.pt` model used instead of ncnn (rock-solid on Windows).
+> the same idea with the Linux-only bits removed, and — since the PC has the headroom the
+> Pi lacks — a **bigger model** (`yolo11m.pt`) at **full resolution**, running every frame,
+> so it detects smaller / farther / partially-hidden people.
 
 ---
 
@@ -22,7 +23,7 @@ ffmpeg -version
 
 **2. Install the Python deps** (in a venv):
 ```powershell
-cd "<...>\LockeDrone\signal_controller_windows"
+cd "<...>\LockeDrone\signal_controller_windows_test"
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -44,7 +45,19 @@ pip install -r requirements.txt
 ```powershell
 python detect_test.py
 ```
-A window opens with green boxes around detected people. **Press `q` to quit.**
+A window opens with green boxes around detected people. **Press `q` to quit.** The
+startup line shows the model + whether it's running `on GPU (CUDA)` or `on CPU`.
+
+---
+
+## Detection quality (tuned to "see more")
+Set in `detect_test.py`:
+- **`MODEL = "yolo11m.pt"`** — far stronger than the Pi's nano. Bump to `yolo11l.pt` or
+  `yolo11x.pt` for even better (downloads automatically on first run).
+- **`IMGSZ = 640`** — full stream resolution, so smaller/farther people get picked up.
+- **`CONF = 0.30`** — lower confidence threshold catches more (raise it if you get false boxes).
+- **GPU = big speed-up:** the default install is **CPU-only**. For a CUDA GPU, install the
+  matching PyTorch from <https://pytorch.org> — then the big models run fast at high FPS.
 
 ---
 
@@ -54,4 +67,4 @@ A window opens with green boxes around detected people. **Press `q` to quit.**
 | `can't reach the drone at 192.168.1.1` | You're not on (only) `FLOW-UFO`. Disconnect home wifi/ethernet, reconnect to the drone, phone off it. |
 | `ffmpeg not found on PATH` | `winget install Gyan.FFmpeg`, then open a **new** terminal. |
 | `no video after 15s` | Drone on + streaming? Try the manual test: `ffmpeg -rtsp_transport udp -i rtsp://192.168.1.1:7070/webcam -frames:v 1 -f null -` |
-| Low FPS | Lower `IMGSZ` in `detect_test.py` (e.g. 320). |
+| Low FPS on CPU | Use a smaller `MODEL` (`yolo11s.pt`/`yolo11n.pt`) or lower `IMGSZ`; or install GPU PyTorch. |

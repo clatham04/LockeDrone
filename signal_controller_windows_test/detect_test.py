@@ -1,7 +1,9 @@
 r"""detect_test.py (Windows) — YOLO person detection on the drone's forward camera.
 
 Windows version of the detection preview: always shows a LIVE window (press 'q' to quit).
-Uses the .pt model by default (rock-solid on Windows/PyTorch; the Pi uses ncnn for speed).
+Uses a BIGGER model + full-resolution inference than the Pi (the PC has the headroom),
+so it detects smaller / farther / partially-hidden people and runs every frame. Bump
+MODEL to yolo11l.pt / yolo11x.pt for even more (best with a CUDA GPU).
 
 Setup (see README.md in this folder):
   1. winget install Gyan.FFmpeg          (then open a NEW terminal)
@@ -11,31 +13,32 @@ Setup (see README.md in this folder):
 """
 import os
 import subprocess
-import sys
 import time
 
 import cv2
+import torch
 from ultralytics import YOLO
 
 from drone_camera import DroneCamera
 
 RTSP = "rtsp://192.168.1.1:7070/webcam"
-CONF = 0.35
+CONF = 0.30                # a touch lower than the Pi -> catches more / farther people
 PERSON_CLASS = 0
-IMGSZ = 480                 # plenty of resolution; a Windows PC handles it easily
+# Bigger model = better detection (smaller/farther/partially-hidden people). On the PC we
+# have headroom the Pi doesn't. Accuracy/slowness order: n < s < m < l < x.
+# Bump to "yolo11l.pt" or "yolo11x.pt" for max accuracy (best with a CUDA GPU).
+MODEL = "yolo11m.pt"
+IMGSZ = 640                # full-resolution inference -> more detail, sees more
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)                 # LockeDrone/ (where the model files live)
+ROOT = os.path.dirname(HERE)                 # LockeDrone/
 
 
 def load_model():
-    """Prefer the local yolo11n.pt; fall back to ultralytics' auto-download by name."""
-    local = os.path.join(ROOT, "yolo11n.pt")
-    if os.path.isfile(local):
-        print(f"[DET] model: {local}")
-        return YOLO(local)
-    print("[DET] yolo11n.pt not found locally — ultralytics will download it.")
-    return YOLO("yolo11n.pt")
+    """Load the chosen model; ultralytics auto-downloads it (to the cwd) the first time."""
+    dev = "GPU (CUDA)" if torch.cuda.is_available() else "CPU"
+    print(f"[DET] model: {MODEL} @ {IMGSZ}px on {dev} (auto-downloads if missing)")
+    return YOLO(MODEL)
 
 
 def reachable():
