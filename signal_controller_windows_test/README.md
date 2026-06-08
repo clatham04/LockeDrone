@@ -56,8 +56,13 @@ Set in `detect_test.py`:
   `yolo11x.pt` for even better (downloads automatically on first run).
 - **`IMGSZ = 640`** — full stream resolution, so smaller/farther people get picked up.
 - **`CONF = 0.30`** — lower confidence threshold catches more (raise it if you get false boxes).
-- **GPU = big speed-up:** the default install is **CPU-only**. For a CUDA GPU, install the
-  matching PyTorch from <https://pytorch.org> — then the big models run fast at high FPS.
+- **GPU = big speed-up:** the default `pip install` gives **CPU-only** PyTorch. With an
+  NVIDIA GPU, switch to the CUDA build so the big models fly:
+  ```powershell
+  pip uninstall -y torch torchvision
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+  python -c "import torch; print(torch.cuda.is_available())"   # should print: True
+  ```
 
 ---
 

@@ -24,10 +24,10 @@ from drone_camera import DroneCamera
 RTSP = "rtsp://192.168.1.1:7070/webcam"
 CONF = 0.30                # a touch lower than the Pi -> catches more / farther people
 PERSON_CLASS = 0
-# Bigger model = better detection (smaller/farther/partially-hidden people). On the PC we
-# have headroom the Pi doesn't. Accuracy/slowness order: n < s < m < l < x.
-# Bump to "yolo11l.pt" or "yolo11x.pt" for max accuracy (best with a CUDA GPU).
-MODEL = "yolo11m.pt"
+# Bigger model = better detection (smaller/farther/partially-hidden people). Accuracy/
+# slowness order: n < s < m < l < x. yolo11x = strongest; an RTX 3080 runs it easily on GPU.
+# (Drop to "yolo11l.pt"/"yolo11m.pt" if you ever run on CPU and want more FPS.)
+MODEL = "yolo11x.pt"
 IMGSZ = 640                # full-resolution inference -> more detail, sees more
 
 HERE = os.path.dirname(os.path.abspath(__file__))
