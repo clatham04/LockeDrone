@@ -1,8 +1,0 @@
-# signal_controller_windows — run the drone camera detection on a Windows PC.
-# Install into a venv:  pip install -r requirements.txt
-# (ultralytics pulls in PyTorch — it's a big download, be patient.)
-
-ultralytics        # YOLO person detection
-opencv-python      # cv2 — draw boxes + show the live window
-numpy
-# ffmpeg is NOT a pip package — install the CLI separately:  winget install Gyan.FFmpeg
