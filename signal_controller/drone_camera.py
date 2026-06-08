@@ -12,6 +12,7 @@ Needs the ffmpeg CLI:  sudo apt install -y ffmpeg
     frame = cam.read()      # newest BGR frame, or None until the first one arrives
     cam.stop()
 """
+import re
 import shutil
 import subprocess
 import threading
@@ -24,6 +25,16 @@ import numpy as np
 # gets a frame to start from. We tolerate glitches instead; the subprocess isolation (not
 # discarding) is what protects us from a decoder crash.
 FFMPEG_OPTS = ["-rtsp_transport", "udp", "-err_detect", "ignore_err"]
+
+
+def ensure_route(url, iface="wlan0"):
+    """Pin the drone's IP to wlan0. The home network and the drone's AP both use
+    192.168.1.x, so without this the camera packets go to your home router and the
+    stream never opens. Needs root (you run with sudo). 'File exists' = already set."""
+    m = re.search(r"://([^:/]+)", url)
+    if m:
+        subprocess.run(["ip", "route", "add", f"{m.group(1)}/32", "dev", iface],
+                       capture_output=True)
 
 
 def probe_size(url, fallback=(640, 352)):
@@ -45,6 +56,7 @@ class DroneCamera:
     def __init__(self, url, width=None, height=None, debug=False):
         if not shutil.which("ffmpeg"):
             raise RuntimeError("ffmpeg CLI not found. Install it:  sudo apt install -y ffmpeg")
+        ensure_route(url)                          # fix the home/drone subnet collision first
         self.url = url
         self.debug = debug
         if width and height:

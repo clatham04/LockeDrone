@@ -28,9 +28,12 @@ Kill switch (deliberate motor cut): `sudo python3 wifi_control.py stop`
 | **`signals_control.py`** | **Main connector.** WiFi + calibrate + takeoff + control loop + trim + gentle land. Runs the active behavior. |
 | **`config.json`** | Which behavior is active, the WiFi keyword, and the flight tuning (trim, hover height). |
 | `behaviors/hover.py` | The hover behavior — holds center sticks. |
+| `behaviors/follow_human.py` | **Vision follow.** Tracks a person and follows them (yaw to center, pitch for distance, throttle to stay head-level), never colliding. Hovers if no one is seen. |
 | `wifi_control.py` | The cooingdv protocol (UDP 7099): build packets, heartbeat, send. Also a CLI: `calibrate` / `idle` / `takeoff` / `stop`. |
 | `wifi_connect.py` | Find + connect to the drone's WiFi by name keyword. |
-| `camera_feed.py` | Pull the drone's forward camera (RTSP). |
+| `drone_camera.py` | Robust RTSP capture: decodes in an ffmpeg subprocess (survives the lossy stream, auto-restarts), pins the wlan0 route, keeps the newest frame. |
+| `camera_feed.py` | Quick one-shot grab of the forward camera (RTSP). |
+| `detect_test.py` | Person-detection preview on the forward camera (no flying) — to check detection quality. |
 
 ---
 
@@ -48,7 +51,28 @@ Kill switch (deliberate motor cut): `sudo python3 wifi_control.py stop`
 
 ---
 
-## Add a behavior (e.g. human-follow)
+## Follow-human (active behavior)
+`config.json` ships with `active_behavior: "follow_human"`. Run `sudo python3
+signals_control.py` and after takeoff the drone tracks the largest person it sees:
+- **Yaw** turns to keep you centered. **Pitch** holds follow distance. **Throttle**
+  keeps it level with your head. **No person / lost you → it hovers** (never flies off).
+- **It won't run into you:** if you fill the frame / your whole body no longer fits, it
+  backs off. Stand still and it holds position.
+
+**Tuning** lives in `config.json → tuning.follow` (adjust outdoors, no code edits):
+```json
+"follow": {
+  "target_dist_h": 0.60,   // bigger = it follows CLOSER (0.7 close, 0.5 farther)
+  "too_close_h": 0.78,     // box taller than this = back off (safety)
+  "target_head_y": 0.28,   // smaller = it flies a bit higher (head sits higher in frame)
+  "max_throttle": 24,      // keep small so it stays low + reachable
+  "yaw_sign": 1, "pitch_sign": 1, "throttle_sign": 1   // FLIP to -1 if a stick goes the wrong way
+}
+```
+> ⚠️ **First flight: tie it to a string and start with low values.** If it turns/moves
+> the wrong direction, flip that axis's `*_sign` to `-1`. Ctrl+C lands it gently.
+
+## Add another behavior
 1. Create `behaviors/follow_human.py` with:
    ```python
    def controller(state):

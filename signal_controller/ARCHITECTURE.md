@@ -73,8 +73,10 @@ That's the entire abstraction. If you can write `controller(state) -> 4 sticks`,
 can add a drone behavior without touching the connector.
 
 - `hover` returns center → the drone holds via its own optical flow.
-- A future `follow_human` will read `state` (forward camera → YOLO person box) and
-  return yaw/pitch to keep the person centered + at distance.
+- `follow_human` (built) reads the forward camera via `drone_camera.DroneCamera`, runs
+  YOLO in its own thread, and returns yaw (center the person) / pitch (hold distance,
+  never collide) / throttle (stay head-level). No person → it returns center (hover).
+  Detection runs off-loop so the 25 Hz control stays smooth and a video glitch → hover.
 - A future `position_hold` will read a **downward camera + floor marker** and return
   roll/pitch to cancel drift — the true lock-in-place hover.
 
