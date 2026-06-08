@@ -12,6 +12,7 @@ Needs the ffmpeg CLI:  sudo apt install -y ffmpeg
     frame = cam.read()      # newest BGR frame, or None until the first one arrives
     cam.stop()
 """
+import shutil
 import subprocess
 import threading
 import time
@@ -22,19 +23,41 @@ import numpy as np
 FFMPEG_OPTS = ["-rtsp_transport", "udp", "-fflags", "discardcorrupt", "-err_detect", "ignore_err"]
 
 
+def probe_size(url, fallback=(640, 352)):
+    """Ask ffprobe for the stream's actual WxH (also a quick connection test)."""
+    if not shutil.which("ffprobe"):
+        return fallback
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-rtsp_transport", "udp", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", url],
+            capture_output=True, text=True, timeout=12).stdout.strip()
+        w, h = (int(x) for x in out.split("x")[:2])
+        return w, h
+    except Exception:
+        return fallback
+
+
 class DroneCamera:
-    def __init__(self, url, width=640, height=352):
+    def __init__(self, url, width=None, height=None, debug=False):
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError("ffmpeg CLI not found. Install it:  sudo apt install -y ffmpeg")
         self.url = url
-        self.w = width
-        self.h = height
+        self.debug = debug
+        if width and height:
+            self.w, self.h = width, height
+        else:
+            self.w, self.h = probe_size(url)
+            print(f"[CAM] detected stream size: {self.w}x{self.h}")
         self.frame = None
         self.running = True
         threading.Thread(target=self._loop, daemon=True).start()
 
     def _spawn(self):
-        cmd = ["ffmpeg", "-nostdin", "-loglevel", "fatal", *FFMPEG_OPTS,
+        cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", *FFMPEG_OPTS,
                "-i", self.url, "-an", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
-        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        stderr = None if self.debug else subprocess.DEVNULL   # debug=True -> see ffmpeg errors
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=stderr)
 
     def _loop(self):
         n = self.w * self.h * 3
@@ -46,6 +69,9 @@ class DroneCamera:
                     if not raw or len(raw) < n:
                         break                       # ffmpeg died/stalled -> restart it
                     self.frame = np.frombuffer(raw, np.uint8).reshape((self.h, self.w, 3))
+            except Exception as e:
+                if self.debug:
+                    print(f"[CAM] reader error: {e}")
             finally:
                 try:
                     proc.kill()

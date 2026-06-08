@@ -27,7 +27,6 @@ RTSP = "rtsp://192.168.1.1:7070/webcam"
 CONF = 0.35
 PERSON_CLASS = 0
 DETECT_EVERY = 2           # run YOLO every Nth frame — frees CPU so the decoder isn't starved
-FRAME_W, FRAME_H = 640, 352
 OUT_VIDEO = "detect_out.mp4"
 OUT_SNAP = "detect_snapshot.jpg"
 
@@ -91,13 +90,13 @@ def main():
         return
 
     print(f"[DET] opening {RTSP} (ffmpeg subprocess — survives the lossy stream) ...")
-    cam = DroneCamera(RTSP, FRAME_W, FRAME_H)
+    cam = DroneCamera(RTSP, debug=True)            # auto-detect size + show ffmpeg errors
 
     writer = None
     if LIVE:
-        print(f"[DET] LIVE window ({FRAME_W}x{FRAME_H}) — press 'q' to quit.")
+        print(f"[DET] LIVE window ({cam.w}x{cam.h}) — press 'q' to quit.")
     else:
-        writer = cv2.VideoWriter(OUT_VIDEO, cv2.VideoWriter_fourcc(*"mp4v"), 15, (FRAME_W, FRAME_H))
+        writer = cv2.VideoWriter(OUT_VIDEO, cv2.VideoWriter_fourcc(*"mp4v"), 15, (cam.w, cam.h))
         print(f"[DET] no display — saving {seconds}s to {OUT_VIDEO} (run from the desktop for a live window).")
 
     # wait for the first frame (ffmpeg connect + first decode can take a couple seconds)
