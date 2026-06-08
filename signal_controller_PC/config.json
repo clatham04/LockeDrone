@@ -1,0 +1,27 @@
+{
+  "wifi_name_contains": "flow",
+  "active_behavior": "follow_human",
+  "behaviors": {
+    "hover": "behaviors.hover",
+    "follow_human": "behaviors.follow_human"
+  },
+  "tuning": {
+    "trim": { "roll": 9, "pitch": -8 },
+    "calibrate_seconds": 1.5,
+    "takeoff_pulse_seconds": 0.4,
+    "hover_descend_throttle": 60,
+    "hover_descend_seconds": 1.5,
+    "follow": {
+      "target_dist_h": 0.60,
+      "too_close_h": 0.78,
+      "target_head_y": 0.28,
+      "max_yaw": 45,
+      "max_pitch": 32,
+      "max_throttle": 24,
+      "search_yaw": 18,
+      "yaw_sign": 1,
+      "pitch_sign": 1,
+      "throttle_sign": 1
+    }
+  }
+}
