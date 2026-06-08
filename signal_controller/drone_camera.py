@@ -19,8 +19,11 @@ import time
 
 import numpy as np
 
-# udp transport (the drone only supports udp), discard corrupt frames, tolerate errors.
-FFMPEG_OPTS = ["-rtsp_transport", "udp", "-fflags", "discardcorrupt", "-err_detect", "ignore_err"]
+# udp transport (the drone only supports udp). Do NOT discard corrupt frames — over this
+# lossy link the keyframes arrive slightly corrupt, and discarding them means ffmpeg never
+# gets a frame to start from. We tolerate glitches instead; the subprocess isolation (not
+# discarding) is what protects us from a decoder crash.
+FFMPEG_OPTS = ["-rtsp_transport", "udp", "-err_detect", "ignore_err"]
 
 
 def probe_size(url, fallback=(640, 352)):
