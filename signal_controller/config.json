@@ -19,6 +19,7 @@
       "max_pitch": 32,
       "max_throttle": 24,
       "search_yaw": 18,
+      "settle_s": 1.5,
       "yaw_sign": 1,
       "pitch_sign": 1,
       "throttle_sign": 1

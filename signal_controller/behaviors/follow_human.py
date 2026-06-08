@@ -59,6 +59,7 @@ DEFAULTS = {
     "throttle_sign": 1,
     "stale_s": 0.8,           # detection older than this -> treat as lost
     "search_yaw": 18,         # no person -> spin slowly in place at this yaw to search (sign = direction)
+    "settle_s": 1.5,          # hold a stable hover this long right after takeoff before maneuvering
 }
 
 # module state: detector thread writes _latest, control loop reads it
@@ -69,6 +70,7 @@ _imgsz = 256
 _running = False
 _lock = threading.Lock()
 _latest = None                # {"cx","top","bottom","h","ts"} in frame fractions, or None
+_flight_start = None          # set on the first control tick (i.e. right after takeoff)
 
 
 def _load_model():
@@ -113,8 +115,9 @@ def _detect_loop():
 
 
 def start(state, config):
-    global _cfg, _cam, _model, _imgsz, _running
+    global _cfg, _cam, _model, _imgsz, _running, _flight_start
     _cfg = {**DEFAULTS, **config.get("tuning", {}).get("follow", {})}
+    _flight_start = None                           # grace timer starts on the first control tick
     print("[FOLLOW] starting camera + detector...")
     _cam = DroneCamera(RTSP)                       # adds the wlan0 route itself
     _model, _imgsz = _load_model()
@@ -144,6 +147,13 @@ def _gated(error, gain, deadzone):
 
 def controller(state):
     """Read the latest detection and return (roll, pitch, throttle, yaw). 128 = hold."""
+    global _flight_start
+    if _flight_start is None:
+        _flight_start = time.time()                # first tick = right after takeoff
+    # Stabilize: hold a plain hover for the first moments of flight before maneuvering.
+    if (time.time() - _flight_start) < _cfg["settle_s"]:
+        return CENTER, CENTER, CENTER, CENTER
+
     with _lock:
         det = _latest
 
