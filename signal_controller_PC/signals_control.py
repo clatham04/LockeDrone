@@ -13,11 +13,12 @@ A behavior is a module under behaviors/ exposing:
 To add one (e.g. follow_human): drop behaviors/follow_human.py, register it in
 config.json's "behaviors", and set "active_behavior". No changes to this file.
 
-    sudo python3 signals_control.py
+    python signals_control.py
 """
 import importlib
 import json
 import os
+import threading
 import time
 
 import wifi_control as wc
@@ -26,6 +27,20 @@ import wifi_connect
 HERE = os.path.dirname(os.path.abspath(__file__))
 RATE_HZ = 25
 PERIOD = 1.0 / RATE_HZ
+
+# keyboard state — set by the listener thread
+_key_land = False
+_key_stop = False
+
+
+def _keyboard_listener():
+    """Background thread: watches for Q (land) and Space (emergency stop)."""
+    global _key_land, _key_stop
+    import keyboard
+    print("[CTRL] keys ready —  Q = gentle land   |   SPACE = emergency stop")
+    keyboard.add_hotkey("q", lambda: globals().update(_key_land=True))
+    keyboard.add_hotkey("space", lambda: globals().update(_key_stop=True))
+    keyboard.wait()  # block this thread, keeping hooks alive
 
 
 def load_config():
@@ -72,12 +87,19 @@ def takeoff(send, t):
 
 
 def land(send):
-    print("\n[CTRL] landing gently — wait for it to come down...")
+    """Controlled descent: gradually lower throttle, then cut motors."""
+    print("\n[CTRL] landing — descending slowly, do not interrupt...")
     try:
-        _pulse(send, 0.3, flags1=wc.F1_ONEKEY)     # trigger auto-land
-        _pulse(send, 5.0)                          # hold link while it descends (no motor cut)
+        # step 1: descend slowly over ~3 seconds (throttle below center = descend)
+        _pulse(send, 3.0, throttle=55)
+        # step 2: cut throttle all the way for final drop to ground
+        _pulse(send, 1.0, throttle=50)
+        # step 3: motor stop
+        _pulse(send, 0.5, flags1=wc.F1_STOP)
     except KeyboardInterrupt:
-        pass                                       # don't abort the landing mid-air
+        # if Ctrl+C again during landing, force stop immediately
+        print("[CTRL] force stopping motors...")
+        _pulse(send, 0.5, flags1=wc.F1_STOP)
     print("[CTRL] landed.")
 
 
@@ -101,6 +123,7 @@ def main():
     send = make_send(t.get("trim", {}))
     wc.setup()
     wc.start()                                     # heartbeat thread
+    threading.Thread(target=_keyboard_listener, daemon=True).start()
     state = {}                                     # shared bag (future: camera/detections go here)
     try:
         calibrate(send, t)
@@ -109,6 +132,13 @@ def main():
             behavior.start(state, cfg)
         secs = n = 0
         while True:
+            if _key_stop:
+                print("\n[CTRL] SPACE pressed — emergency stop!")
+                _pulse(send, 0.5, flags1=wc.F1_STOP)
+                break
+            if _key_land:
+                land(send)
+                break
             roll, pitch, throttle, yaw = behavior.controller(state)
             send(roll=roll, pitch=pitch, throttle=throttle, yaw=yaw)
             n += 1

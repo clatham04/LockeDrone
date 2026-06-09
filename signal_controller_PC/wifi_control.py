@@ -1,8 +1,7 @@
 r"""wifi_control.py — control the FLOW-UFO drone over Wi-Fi (cooingdv GL protocol).
 
-The KY UFO app = the "cooingdv" drone family; the FLOW- SSID = the "GL" 21-byte
-variant. The whole reason TCP 7070 kept resetting us: 7070 is the RTSP *video*
-stream (rtsp://192.168.1.1:7070/webcam), NOT control. Control is UDP 7099.
+Windows-compatible version. Removed fcntl / SO_BINDTODEVICE (Linux-only).
+Socket is bound to the local WiFi IP detected automatically.
 
   - Control:   UDP -> 192.168.1.1:7099
   - Heartbeat: {0x01, 0x01} -> :7099 every second (keeps the session alive)
@@ -14,24 +13,19 @@ GL control packet (21 bytes):
   F2: 0x01 headless
   CK = RR ^ PP ^ TT ^ YY ^ F1 ^ F2
 
-We bind the socket to wlan0's IP so packets reach the drone, not the home router
-(home + drone both use 192.168.1.x).
-
 USAGE:
   python wifi_control.py calibrate   # gyro cal — LEDs blink, NO props spin (safe test!)
   python wifi_control.py             # idle — centered, motors off
   python wifi_control.py takeoff     # one-key takeoff (drone SECURED, 5s abort)
+  python wifi_control.py stop        # emergency motor cut
 """
-import fcntl
 import socket
-import struct
 import sys
 import threading
 import time
 
 DRONE_IP = "192.168.1.1"
 CONTROL_PORT = 7099
-IFACE = "wlan0"
 RATE_HZ = 25
 CENTER = 128
 
@@ -43,27 +37,25 @@ _running = True
 _sock = None
 
 
-def _iface_ip(iface):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    return socket.inet_ntoa(fcntl.ioctl(
-        s.fileno(), 0x8915, struct.pack("256s", iface[:15].encode()))[20:24])
+def _local_ip():
+    """Find the local IP on the drone's subnet (192.168.1.x) by connecting a dummy socket."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect((DRONE_IP, CONTROL_PORT))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "0.0.0.0"
 
 
 def setup():
-    """Open the UDP socket pinned to wlan0 so traffic can't leak to Ethernet/home.
-
-    Two locks, so eth0 and wlan0 can NEVER mix:
-      1. SO_BINDTODEVICE = wlan0 (hard interface lock; needs root, skipped if not).
-      2. bind() to wlan0's own IP (forces egress wlan0 even without root).
-    Home network and drone both use 192.168.1.x, so this is essential.
-    """
+    """Open the UDP socket bound to the WiFi interface facing the drone."""
     global _sock
+    local_ip = _local_ip()
     _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        _sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, IFACE.encode())
-    except (PermissionError, OSError):
-        pass  # not root — the IP bind below still pins us to wlan0
-    _sock.bind((_iface_ip(IFACE), 0))
+    _sock.bind((local_ip, 0))
+    print(f"[WIFI] socket bound to {local_ip}")
 
 
 def build_gl(roll=CENTER, pitch=CENTER, throttle=CENTER, yaw=CENTER, flags1=0, flags2=0):
@@ -92,8 +84,7 @@ def _heartbeat():
 
 def start():
     threading.Thread(target=_heartbeat, daemon=True).start()
-    print(f"[WIFI] heartbeat + control -> {DRONE_IP}:{CONTROL_PORT} "
-          f"(UDP from {_sock.getsockname()[0]} via {IFACE})")
+    print(f"[WIFI] heartbeat + control -> {DRONE_IP}:{CONTROL_PORT}")
 
 
 def pulse(seconds, **kw):
@@ -132,7 +123,7 @@ def run_idle():
 
 
 def run_stop():
-    """EMERGENCY motor cut — drops the drone immediately. Use if it's misbehaving."""
+    """EMERGENCY motor cut — drops the drone immediately."""
     start()
     print("[WIFI] *** EMERGENCY STOP *** cutting motors...")
     pulse(1.0, flags1=F1_STOP)
@@ -148,11 +139,11 @@ def run_takeoff():
     time.sleep(5)
     try:
         print("[WIFI] takeoff...")
-        pulse(0.3, flags1=F1_ONEKEY)        # brief one-key press
+        pulse(0.3, flags1=F1_ONEKEY)
         stream("HOVER (centered, altitude-hold). Ctrl+C to land.")
     finally:
         print("[WIFI] landing...")
-        pulse(0.3, flags1=F1_ONEKEY)        # one-key again = land
+        pulse(0.3, flags1=F1_ONEKEY)
 
 
 def main():

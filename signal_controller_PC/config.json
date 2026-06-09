@@ -1,6 +1,6 @@
 {
   "wifi_name_contains": "flow",
-  "active_behavior": "follow_human",
+  "active_behavior": "hover",
   "behaviors": {
     "hover": "behaviors.hover",
     "follow_human": "behaviors.follow_human"
@@ -10,7 +10,7 @@
     "calibrate_seconds": 1.5,
     "takeoff_pulse_seconds": 0.4,
     "hover_descend_throttle": 60,
-    "hover_descend_seconds": 1.5,
+    "hover_descend_seconds": 3.0,
     "follow": {
       "target_dist_h": 0.60,
       "too_close_h": 0.78,
