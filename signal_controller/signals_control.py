@@ -103,10 +103,17 @@ def main():
     wc.start()                                     # heartbeat thread
     state = {}                                     # shared bag (future: camera/detections go here)
     try:
+        # Start the behavior (load camera + model) on the GROUND, BEFORE flying. Doing this
+        # after takeoff left the drone hovering with NO control commands for the seconds it
+        # took to load — so it drifted off and crashed, and the tuning never even ran.
+        if hasattr(behavior, "start"):
+            try:
+                behavior.start(state, cfg)
+            except Exception as e:
+                print(f"[CTRL] behavior '{name}' failed to start: {e} — NOT taking off.")
+                return
         calibrate(send, t)
         takeoff(send, t)
-        if hasattr(behavior, "start"):
-            behavior.start(state, cfg)
         secs = n = 0
         while True:
             roll, pitch, throttle, yaw = behavior.controller(state)
