@@ -113,3 +113,7 @@ can add a drone behavior without touching the connector.
   in as just another `controller`.
 - Subnet collision (home + drone both `192.168.1.x`) is handled by pinning the control
   socket to `wlan0` in `wifi_control.py`.
+
+
+The drone this time just stayed in place and didnt move at all when i was in front of it. i even got closer and moved around and it didn't lock on to me at all.
+

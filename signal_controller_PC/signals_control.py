@@ -149,12 +149,14 @@ def main():
     except KeyboardInterrupt:
         land(send)
     finally:
+        # stop behavior and heartbeat cleanly — no more printing after this
         if hasattr(behavior, "stop"):
             try:
                 behavior.stop(state, cfg)
             except Exception:
                 pass
         wc._running = False
+        print("[CTRL] done.")
 
 
 if __name__ == "__main__":

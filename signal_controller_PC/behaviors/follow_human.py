@@ -1,26 +1,26 @@
 r"""follow_human — the drone follows a person, vision-driven and flight-safe.
 
-It watches the forward camera, finds the (largest) person, and turns their bounding box
-into the four sticks. Goals, in the user's words:
+It watches the forward camera, finds the (largest/closest) person, and turns their
+bounding box into the four sticks. Goals:
 
-  - NEVER run into the human. We hold a follow distance and hard-stop / back off if the
-    box gets too big or the WHOLE BODY no longer fits the frame (that means too close).
-  - Level with the head. We raise/lower so the head (top of the box) sits at a target
+  - NEVER run into the human. Hold a follow distance and back off if the box gets
+    too big or the whole body no longer fits the frame (that means too close).
+  - Level with the head. Raise/lower so the head (top of the box) sits at a target
     height in the frame.
   - Follow where they go. YAW turns to keep them centred; PITCH moves in/out to hold
-    distance. Walk away -> box shrinks -> move closer. Stand still -> no error -> HOVER.
+    distance. Walk away -> box shrinks -> move closer. Stand still -> hover.
   - Stay low + reachable. Altitude pushes are small and bounded.
-  - Search when lost. No person / stale detection / no frame yet -> spin slowly IN PLACE
-    (yaw only, no drift) until someone comes into view, then lock on. Never flies off.
+  - Search when lost. No person -> spin slowly IN PLACE (yaw only, no drift) until
+    someone comes into view, then lock on. Never flies off.
 
-Detection (YOLO, ~8 FPS) runs in its OWN thread; the 25 Hz control loop just reads the
-latest box, so flight stays smooth and a video glitch simply -> hover.
+Detection (YOLO, ~8 FPS) runs in its OWN thread; the 25 Hz control loop just reads
+the latest box, so flight stays smooth and a video glitch simply -> hover.
 
-Tuning lives in config.json under tuning.follow (so you can adjust outdoors without
-editing code). If a stick drives the WRONG way during your tied-string test, flip the
-matching *_sign (1 / -1) in config — that's the quick fix.
+Tuning lives in config.json under tuning.follow. If a stick drives the WRONG way
+during your tied-string test, flip the matching *_sign (1 / -1) in config.
 """
 import os
+import subprocess
 import threading
 import time
 
@@ -33,46 +33,48 @@ RTSP = "rtsp://192.168.1.1:7070/webcam"
 PERSON_CLASS = 0
 CENTER = 128
 
-HERE = os.path.dirname(os.path.abspath(__file__))     # .../signal_controller/behaviors
-ROOT = os.path.dirname(os.path.dirname(HERE))         # .../LockeDrone
+HERE = os.path.dirname(os.path.abspath(__file__))     # .../behaviors
+ROOT = os.path.dirname(os.path.dirname(HERE))         # project root
 
-# Defaults — overridden by config.json -> tuning.follow.
 DEFAULTS = {
     "conf": 0.35,
-    # targets (fractions of frame height/width)
-    "target_dist_h": 0.60,    # hold the person's box at ~60% of frame height (follow distance)
-    "too_close_h": 0.78,      # box taller than this = too close -> back off
-    "target_head_y": 0.28,    # head (box top) should sit here -> "level with the head"
-    "edge_margin": 0.04,      # box within this of top AND bottom = body cut off = too close
-    "deadzone": 0.05,         # ignore errors smaller than this (no twitching when you're still)
-    # proportional gains (stick units per unit fractional error)
+    "target_dist_h": 0.60,
+    "too_close_h": 0.78,
+    "target_head_y": 0.28,
+    "edge_margin": 0.04,
+    "deadzone": 0.05,
     "yaw_gain": 110.0,
     "pitch_gain": 160.0,
     "throttle_gain": 130.0,
-    # how far we ever push a stick from centre (gentle; throttle small so it stays low)
     "max_yaw": 45,
     "max_pitch": 32,
     "max_throttle": 24,
-    # flip if a stick drives the wrong way during testing
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
-    "stale_s": 0.8,           # detection older than this -> treat as lost
-    "search_yaw": 18,         # no person -> spin slowly in place at this yaw to search (sign = direction)
+    "stale_s": 0.8,
+    "search_yaw": 18,
 }
 
-# module state: detector thread writes _latest, control loop reads it
 _cfg = dict(DEFAULTS)
 _cam = None
 _model = None
 _imgsz = 256
 _running = False
 _lock = threading.Lock()
-_latest = None                # {"cx","top","bottom","h","ts"} in frame fractions, or None
+_latest = None
+
+
+def _ensure_route():
+    """Pin the drone's IP via a host route on Windows."""
+    subprocess.run(
+        ["route", "add", "192.168.1.1", "mask", "255.255.255.255", "192.168.1.1"],
+        capture_output=True
+    )
 
 
 def _load_model():
-    """Prefer the fast ncnn export (read its baked imgsz); fall back to the .pt."""
+    """Prefer the fast ncnn export; fall back to the .pt."""
     ncnn = os.path.join(ROOT, "yolo11n_ncnn_model")
     meta = os.path.join(ncnn, "metadata.yaml")
     if os.path.isfile(meta):
@@ -98,7 +100,7 @@ def _biggest_person(boxes, fw, fh):
 
 
 def _detect_loop():
-    """Continuously detect the person and publish the latest box (its own thread)."""
+    """Continuously detect the person and publish the latest box."""
     global _latest
     conf = _cfg["conf"]
     while _running:
@@ -115,10 +117,12 @@ def _detect_loop():
 def start(state, config):
     global _cfg, _cam, _model, _imgsz, _running
     _cfg = {**DEFAULTS, **config.get("tuning", {}).get("follow", {})}
+    _ensure_route()
     print("[FOLLOW] starting camera + detector...")
-    _cam = DroneCamera(RTSP)                       # adds the wlan0 route itself
+    _cam = DroneCamera(RTSP)
     _model, _imgsz = _load_model()
-    print(f"[FOLLOW] model ready @ {_imgsz}px — following. (Ctrl+C lands gently.)")
+    print(f"[FOLLOW] model ready @ {_imgsz}px — searching for a person...")
+    print("[FOLLOW] spinning to search. Will lock on when someone comes into view.")
     _running = True
     threading.Thread(target=_detect_loop, daemon=True).start()
 
@@ -132,13 +136,11 @@ def stop(state, config):
 
 
 def _stick(deviation, limit):
-    """Clamp a deviation to +/- limit and return an absolute stick value (centred at 128)."""
     deviation = max(-limit, min(limit, deviation))
     return int(CENTER + deviation)
 
 
 def _gated(error, gain, deadzone):
-    """Proportional output, but 0 inside the deadzone (so we hold still when you do)."""
     return 0.0 if abs(error) < deadzone else gain * error
 
 
@@ -147,28 +149,26 @@ def controller(state):
     with _lock:
         det = _latest
 
-    # Lost: nothing detected / stale -> SEARCH by spinning slowly in place (yaw only, no
-    # forward/up drift, so it stays safe). It'll lock on the moment someone comes into view.
+    # No person found / stale -> spin slowly in place to search
     if det is None or (time.time() - det["ts"]) > _cfg["stale_s"]:
         return CENTER, CENTER, CENTER, _stick(_cfg["search_yaw"], _cfg["max_yaw"])
 
     dz = _cfg["deadzone"]
 
-    # --- YAW: turn to keep the person centred left/right ---
+    # YAW: turn to keep the person centred left/right
     yaw_dev = _gated(det["cx"] - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
 
-    # --- PITCH: hold follow distance, and NEVER collide ---
+    # PITCH: hold follow distance, never collide
     body_cut = det["top"] < _cfg["edge_margin"] and det["bottom"] > (1 - _cfg["edge_margin"])
     if det["h"] > _cfg["too_close_h"] or body_cut:
-        pitch_dev = -_cfg["max_pitch"]             # too close / body cut off -> full safe back-off
+        pitch_dev = -_cfg["max_pitch"]             # too close -> full back-off
     else:
-        # small box (person far) -> positive error -> move forward; never past target distance
         pitch_dev = _gated(_cfg["target_dist_h"] - det["h"], _cfg["pitch_gain"], dz) * _cfg["pitch_sign"]
 
-    # --- THROTTLE: stay level with the head (keep box top at target_head_y) ---
+    # THROTTLE: keep head at target height in frame
     thr_dev = -_gated(det["top"] - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
 
-    roll = CENTER                                  # no sideways strafing; yaw handles left/right
+    roll = CENTER
     pitch = _stick(pitch_dev, _cfg["max_pitch"])
     throttle = _stick(thr_dev, _cfg["max_throttle"])
     yaw = _stick(yaw_dev, _cfg["max_yaw"])
