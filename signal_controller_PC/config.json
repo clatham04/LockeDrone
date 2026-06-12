@@ -11,19 +11,21 @@
       "pitch": -8
     },
     "calibrate_seconds": 1.5,
-    "takeoff_pulse_seconds": 0.4,
+    "takeoff_pulse_seconds": 0.6,
     "hover_descend_throttle": 128,
     "hover_descend_seconds": 2.0,
     "follow": {
-      "target_dist_h": 0.6,
-      "too_close_h": 0.78,
+      "target_dist_h": 0.75,
+      "too_close_h": 0.95,
+      "edge_margin": 0.0,
       "target_head_y": 0.28,
       "max_yaw": 45,
-      "max_pitch": 15,
+      "max_pitch": 25,
       "max_throttle": 15,
+      "pitch_gain": 220.0,
       "search_yaw": 18,
       "yaw_sign": 1,
-      "pitch_sign": -1,
+      "pitch_sign": 1,
       "throttle_sign": 1
     }
   }

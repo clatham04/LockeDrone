@@ -37,7 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))     # .../behaviors
 ROOT = os.path.dirname(os.path.dirname(HERE))         # project root
 
 DEFAULTS = {
-    "conf": 0.35,
+    "conf": 0.20,
     "target_dist_h": 0.60,
     "too_close_h": 0.78,
     "target_head_y": 0.28,
@@ -103,6 +103,7 @@ def _detect_loop():
     """Continuously detect the person and publish the latest box."""
     global _latest
     conf = _cfg["conf"]
+    _dbg_count = 0
     while _running:
         frame = _cam.read()
         if frame is None:
@@ -110,8 +111,16 @@ def _detect_loop():
             continue
         fh, fw = frame.shape[:2]
         results = _model(frame, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)
+        det = _biggest_person(results[0].boxes, fw, fh)
         with _lock:
-            _latest = _biggest_person(results[0].boxes, fw, fh)
+            _latest = det
+        # print detection status every 2 seconds (every ~16 frames at ~8fps)
+        _dbg_count += 1
+        if _dbg_count % 16 == 0:
+            if det:
+                print(f"[FOLLOW] person detected — cx:{det['cx']:.2f} h:{det['h']:.2f} top:{det['top']:.2f}")
+            else:
+                print("[FOLLOW] no person detected — searching...")
 
 
 def start(state, config):
@@ -172,4 +181,13 @@ def controller(state):
     pitch = _stick(pitch_dev, _cfg["max_pitch"])
     throttle = _stick(thr_dev, _cfg["max_throttle"])
     yaw = _stick(yaw_dev, _cfg["max_yaw"])
+
+    # debug: print pitch every ~1 second so we can see what direction it's pushing
+    if not hasattr(controller, "_dbg"):
+        controller._dbg = 0
+    controller._dbg += 1
+    if controller._dbg % 25 == 0:
+        direction = "FORWARD" if pitch > 128 else "BACKWARD" if pitch < 128 else "HOLD"
+        print(f"[FOLLOW] pitch={pitch} ({direction})  h={det['h']:.2f}  target={_cfg['target_dist_h']}")
+
     return roll, pitch, throttle, yaw

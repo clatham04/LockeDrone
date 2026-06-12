@@ -34,12 +34,15 @@ _key_stop = False
 
 
 def _keyboard_listener():
-    """Background thread: watches for Q (land) and Space (emergency stop)."""
+    """Background thread: watches for Q (land) and Space (emergency stop).
+    Waits until the drone is fully airborne before activating to ignore any
+    leftover keypresses typed in the terminal before launch."""
     global _key_land, _key_stop
     import keyboard
-    print("[CTRL] keys ready —  Q = gentle land   |   SPACE = emergency stop")
+    time.sleep(8)  # wait for calibrate + takeoff to finish before listening
     keyboard.add_hotkey("q", lambda: globals().update(_key_land=True))
     keyboard.add_hotkey("space", lambda: globals().update(_key_stop=True))
+    print("[CTRL] keys ready —  Q = gentle land   |   SPACE = emergency stop")
     keyboard.wait()  # block this thread, keeping hooks alive
 
 
@@ -90,14 +93,10 @@ def land(send):
     """Controlled descent: gradually lower throttle, then cut motors."""
     print("\n[CTRL] landing — descending slowly, do not interrupt...")
     try:
-        # step 1: descend slowly over ~3 seconds (throttle below center = descend)
         _pulse(send, 3.0, throttle=55)
-        # step 2: cut throttle all the way for final drop to ground
         _pulse(send, 1.0, throttle=50)
-        # step 3: motor stop
         _pulse(send, 0.5, flags1=wc.F1_STOP)
     except KeyboardInterrupt:
-        # if Ctrl+C again during landing, force stop immediately
         print("[CTRL] force stopping motors...")
         _pulse(send, 0.5, flags1=wc.F1_STOP)
     print("[CTRL] landed.")
@@ -124,7 +123,7 @@ def main():
     wc.setup()
     wc.start()                                     # heartbeat thread
     threading.Thread(target=_keyboard_listener, daemon=True).start()
-    state = {}                                     # shared bag (future: camera/detections go here)
+    state = {}
     try:
         calibrate(send, t)
         takeoff(send, t)
@@ -149,7 +148,6 @@ def main():
     except KeyboardInterrupt:
         land(send)
     finally:
-        # stop behavior and heartbeat cleanly — no more printing after this
         if hasattr(behavior, "stop"):
             try:
                 behavior.stop(state, cfg)
