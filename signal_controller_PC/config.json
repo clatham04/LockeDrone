@@ -8,21 +8,20 @@
   "tuning": {
     "trim": {
       "roll": 9,
-      "pitch": 0
+      "pitch": 8
     },
     "calibrate_seconds": 1.5,
-    "takeoff_pulse_seconds": 0.7,
-    "hover_descend_throttle": 140,
-    "hover_descend_seconds": 3.0,
+    "takeoff_pulse_seconds": 0.9,
     "follow": {
-      "target_dist_h": 0.8,
-      "too_close_h": 0.95,
+      "target_dist_h": 0.7,
+      "too_close_h": 0.92,
       "edge_margin": 0.0,
-      "target_head_y": 0.28,
+      "target_head_y": 0.35,
       "max_yaw": 45,
-      "max_pitch": 35,
-      "max_throttle": 15,
-      "pitch_gain": 220.0,
+      "max_pitch": 50,
+      "max_throttle": 30,
+      "throttle_gain": 160.0,
+      "pitch_gain": 280.0,
       "search_yaw": 40,
       "yaw_sign": 1,
       "pitch_sign": 1,

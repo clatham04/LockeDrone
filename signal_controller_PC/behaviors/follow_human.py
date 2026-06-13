@@ -116,21 +116,44 @@ def _detect_loop():
         with _lock:
             _latest = det
 
-        # draw detection box on frame
+        # draw detection box and head tracking dot on frame
         display = frame.copy()
+        fh_disp, fw_disp = display.shape[:2]
+
         if det:
-            x1 = int(det["cx"] * fw - (det["h"] * fh) / 2)
-            x2 = int(det["cx"] * fw + (det["h"] * fh) / 2)
-            y1 = int(det["top"] * fh)
-            y2 = int(det["bottom"] * fh)
+            # full body box
+            x1 = int((det["cx"] - det["h"] * 0.3) * fw_disp)
+            x2 = int((det["cx"] + det["h"] * 0.3) * fw_disp)
+            y1 = int(det["top"] * fh_disp)
+            y2 = int(det["bottom"] * fh_disp)
             cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+            # head center dot — top 15% of the box
+            head_x = int(det["cx"] * fw_disp)
+            head_y = int((det["top"] + det["h"] * 0.10) * fh_disp)
+            cv2.circle(display, (head_x, head_y), 8, (0, 0, 255), -1)   # red filled dot
+            cv2.circle(display, (head_x, head_y), 12, (255, 255, 255), 2)  # white ring
+
+            # crosshair lines from head dot
+            cv2.line(display, (head_x - 20, head_y), (head_x + 20, head_y), (0, 0, 255), 1)
+            cv2.line(display, (head_x, head_y - 20), (head_x, head_y + 20), (0, 0, 255), 1)
+
+            # target head position line (where we want the head to be)
+            target_y = int(_cfg["target_head_y"] * fh_disp)
+            cv2.line(display, (0, target_y), (fw_disp, target_y), (0, 255, 255), 1)
+
             cv2.putText(display, f"h:{det['h']:.2f} cx:{det['cx']:.2f}",
                         (x1, max(y1 - 8, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             status = "TRACKING"
             color = (0, 255, 0)
         else:
+            # show center crosshair when searching
+            cx, cy = fw_disp // 2, fh_disp // 2
+            cv2.line(display, (cx - 30, cy), (cx + 30, cy), (0, 165, 255), 2)
+            cv2.line(display, (cx, cy - 30), (cx, cy + 30), (0, 165, 255), 2)
             status = "SEARCHING..."
             color = (0, 165, 255)
+
         cv2.putText(display, status, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
         cv2.imshow("Drone Camera — press ESC to close", display)
         cv2.waitKey(1)

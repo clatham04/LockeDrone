@@ -114,13 +114,16 @@ def main():
 
     state = {}
     try:
+        # load camera + model BEFORE takeoff so it's ready the moment we're airborne
+        if hasattr(behavior, "start"):
+            print("[CTRL] loading camera and model — please wait...")
+            behavior.start(state, cfg)
+            print("[CTRL] ready — starting calibration.")
+
         calibrate(send, t)
         takeoff(send, t)
 
-        if hasattr(behavior, "start"):
-            behavior.start(state, cfg)
-
-        # activate keys only after drone is fully airborne
+        # activate keys only after drone is airborne
         _keys_active = True
         print("[CTRL] keys ready —  Q = gentle land   |   SPACE = emergency stop")
 

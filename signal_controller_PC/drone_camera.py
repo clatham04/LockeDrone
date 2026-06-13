@@ -63,20 +63,17 @@ def probe_size(url, fallback=(640, 352), retries=3):
 
 
 class DroneCamera:
-    def __init__(self, url, width=None, height=None, debug=False):
+    def __init__(self, url, width=640, height=352, debug=False):
         if not shutil.which("ffmpeg"):
             raise RuntimeError(
                 "ffmpeg CLI not found. Download it from https://ffmpeg.org/download.html "
                 "and add the bin folder to your system PATH."
             )
-        ensure_route(url)                          # fix the home/drone subnet collision first
+        ensure_route(url)
         self.url = url
         self.debug = debug
-        if width and height:
-            self.w, self.h = width, height
-        else:
-            self.w, self.h = probe_size(url)
-            print(f"[CAM] detected stream size: {self.w}x{self.h}")
+        self.w, self.h = width, height
+        print(f"[CAM] stream size: {self.w}x{self.h}")
         self.frame = None
         self.running = True
         threading.Thread(target=self._loop, daemon=True).start()
