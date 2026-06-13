@@ -40,19 +40,26 @@ def ensure_route(url):
         )  # ignore errors — already exists is fine
 
 
-def probe_size(url, fallback=(640, 352)):
-    """Ask ffprobe for the stream's actual WxH (also a quick connection test)."""
+def probe_size(url, fallback=(640, 352), retries=3):
+    """Ask ffprobe for the stream's actual WxH, with retries if it fails."""
     if not shutil.which("ffprobe"):
+        print(f"[CAM] ffprobe not found — using fallback size {fallback[0]}x{fallback[1]}")
         return fallback
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-rtsp_transport", "udp", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", url],
-            capture_output=True, text=True, timeout=12).stdout.strip()
-        w, h = (int(x) for x in out.split("x")[:2])
-        return w, h
-    except Exception:
-        return fallback
+    for attempt in range(retries):
+        try:
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-rtsp_transport", "udp", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", url],
+                capture_output=True, text=True, timeout=12).stdout.strip()
+            w, h = (int(x) for x in out.split("x")[:2])
+            if w > 0 and h > 0:
+                return w, h
+            print(f"[CAM] probe returned 0x0 (attempt {attempt+1}/{retries}), retrying...")
+        except Exception as e:
+            print(f"[CAM] probe failed (attempt {attempt+1}/{retries}): {e}")
+        time.sleep(2)
+    print(f"[CAM] probe failed after {retries} attempts — using fallback {fallback[0]}x{fallback[1]}")
+    return fallback
 
 
 class DroneCamera:
