@@ -6,19 +6,22 @@
     "follow_human": "behaviors.follow_human"
   },
   "tuning": {
-    "trim": { "roll": 9, "pitch": 0 },
+    "trim": {
+      "roll": 9,
+      "pitch": 0
+    },
     "calibrate_seconds": 1.5,
-    "takeoff_pulse_seconds": 0.6,
-    "hover_descend_throttle": 128,
+    "takeoff_pulse_seconds": 0.7,
+    "hover_descend_throttle": 140,
     "hover_descend_seconds": 3.0,
     "follow": {
-      "target_dist_h": 0.80,
+      "target_dist_h": 0.8,
       "too_close_h": 0.95,
       "edge_margin": 0.0,
       "target_head_y": 0.28,
       "max_yaw": 45,
       "max_pitch": 35,
-      "max_throttle": 0,
+      "max_throttle": 15,
       "pitch_gain": 220.0,
       "search_yaw": 40,
       "yaw_sign": 1,

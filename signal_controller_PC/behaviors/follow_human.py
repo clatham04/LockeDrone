@@ -24,6 +24,7 @@ import subprocess
 import threading
 import time
 
+import cv2
 import yaml
 from ultralytics import YOLO
 
@@ -100,7 +101,7 @@ def _biggest_person(boxes, fw, fh):
 
 
 def _detect_loop():
-    """Continuously detect the person and publish the latest box."""
+    """Continuously detect the person, publish the latest box, and show a live window."""
     global _latest
     conf = _cfg["conf"]
     _dbg_count = 0
@@ -114,7 +115,27 @@ def _detect_loop():
         det = _biggest_person(results[0].boxes, fw, fh)
         with _lock:
             _latest = det
-        # print detection status every 2 seconds (every ~16 frames at ~8fps)
+
+        # draw detection box on frame
+        display = frame.copy()
+        if det:
+            x1 = int(det["cx"] * fw - (det["h"] * fh) / 2)
+            x2 = int(det["cx"] * fw + (det["h"] * fh) / 2)
+            y1 = int(det["top"] * fh)
+            y2 = int(det["bottom"] * fh)
+            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(display, f"h:{det['h']:.2f} cx:{det['cx']:.2f}",
+                        (x1, max(y1 - 8, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            status = "TRACKING"
+            color = (0, 255, 0)
+        else:
+            status = "SEARCHING..."
+            color = (0, 165, 255)
+        cv2.putText(display, status, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv2.imshow("Drone Camera — press ESC to close", display)
+        cv2.waitKey(1)
+
+        # print detection status every 2 seconds
         _dbg_count += 1
         if _dbg_count % 16 == 0:
             if det:
@@ -141,6 +162,7 @@ def stop(state, config):
     _running = False
     if _cam:
         _cam.stop()
+    cv2.destroyAllWindows()
     print("[FOLLOW] stopped.")
 
 
