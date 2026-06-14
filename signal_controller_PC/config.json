@@ -6,15 +6,10 @@
     "follow_human": "behaviors.follow_human"
   },
   "tuning": {
-    "trim": {
-      "roll": 9,
-      "pitch": 8
-    },
+    "trim": { "roll": 9, "pitch": 8 },
     "calibrate_seconds": 1.5,
     "takeoff_pulse_seconds": 0.9,
     "follow": {
-      "target_dist_h": 0.7,
-      "too_close_h": 0.92,
       "edge_margin": 0.0,
       "target_head_y": 0.35,
       "max_yaw": 45,
@@ -25,7 +20,14 @@
       "search_yaw": 40,
       "yaw_sign": 1,
       "pitch_sign": 1,
-      "throttle_sign": 1
+      "throttle_sign": 1,
+
+      "head_width_ft": 0.5,
+      "head_width_frac": 0.55,
+      "camera_hfov_deg": 60.0,
+      "frame_width_px": 640,
+      "target_dist_ft": 11.0,
+      "too_close_ft": 6.0
     }
   }
 }
