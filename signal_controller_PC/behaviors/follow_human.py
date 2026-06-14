@@ -1,23 +1,10 @@
 r"""follow_human — the drone follows a person, vision-driven and flight-safe.
 
-It watches the forward camera, finds the (largest/closest) person, and turns their
-bounding box into the four sticks. Goals:
-
-  - NEVER run into the human. Hold a follow distance and back off if the box gets
-    too big or the whole body no longer fits the frame (that means too close).
-  - Level with the head. Raise/lower so the head (top of the box) sits at a target
-    height in the frame.
-  - Follow where they go. YAW turns to keep them centred; PITCH moves in/out to hold
-    distance. Walk away -> box shrinks -> move closer. Stand still -> hover.
-  - Stay low + reachable. Altitude pushes are small and bounded.
-  - Search when lost. No person -> spin slowly IN PLACE (yaw only, no drift) until
-    someone comes into view, then lock on. Never flies off.
-
-Detection (YOLO, ~8 FPS) runs in its OWN thread; the 25 Hz control loop just reads
-the latest box, so flight stays smooth and a video glitch simply -> hover.
-
-Tuning lives in config.json under tuning.follow. If a stick drives the WRONG way
-during your tied-string test, flip the matching *_sign (1 / -1) in config.
+Searches by spinning until a person is found, then tracks the largest person:
+- YAW: keeps them centered left/right
+- PITCH: holds follow distance (target_dist_h)
+- THROTTLE: keeps head at target height in frame
+- Detection is smoothed to prevent jumping between body parts
 """
 import os
 import subprocess
@@ -33,28 +20,29 @@ from drone_camera import DroneCamera
 RTSP = "rtsp://192.168.1.1:7070/webcam"
 PERSON_CLASS = 0
 CENTER = 128
+SMOOTH = 0.4   # exponential smoothing factor (0=no update, 1=no smoothing)
 
-HERE = os.path.dirname(os.path.abspath(__file__))     # .../behaviors
-ROOT = os.path.dirname(os.path.dirname(HERE))         # project root
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))
 
 DEFAULTS = {
     "conf": 0.20,
-    "target_dist_h": 0.60,
-    "too_close_h": 0.78,
-    "target_head_y": 0.28,
-    "edge_margin": 0.04,
+    "target_dist_h": 0.70,
+    "too_close_h": 0.92,
+    "edge_margin": 0.0,
+    "target_head_y": 0.35,
     "deadzone": 0.05,
     "yaw_gain": 110.0,
-    "pitch_gain": 160.0,
-    "throttle_gain": 130.0,
+    "pitch_gain": 280.0,
+    "throttle_gain": 160.0,
     "max_yaw": 45,
-    "max_pitch": 32,
-    "max_throttle": 24,
+    "max_pitch": 50,
+    "max_throttle": 30,
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
     "stale_s": 0.8,
-    "search_yaw": 18,
+    "search_yaw": 40,
 }
 
 _cfg = dict(DEFAULTS)
@@ -63,11 +51,11 @@ _model = None
 _imgsz = 256
 _running = False
 _lock = threading.Lock()
-_latest = None
+_latest = None      # raw latest detection
+_smoothed = None    # exponentially smoothed detection
 
 
 def _ensure_route():
-    """Pin the drone's IP via a host route on Windows."""
     subprocess.run(
         ["route", "add", "192.168.1.1", "mask", "255.255.255.255", "192.168.1.1"],
         capture_output=True
@@ -75,7 +63,6 @@ def _ensure_route():
 
 
 def _load_model():
-    """Prefer the fast ncnn export; fall back to the .pt."""
     ncnn = os.path.join(ROOT, "yolo11n_ncnn_model")
     meta = os.path.join(ncnn, "metadata.yaml")
     if os.path.isfile(meta):
@@ -86,7 +73,6 @@ def _load_model():
 
 
 def _biggest_person(boxes, fw, fh):
-    """Largest person box -> frame-fraction summary, or None."""
     best, best_area = None, 0.0
     for b in boxes:
         x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
@@ -96,13 +82,31 @@ def _biggest_person(boxes, fw, fh):
     if best is None:
         return None
     x1, y1, x2, y2 = best
-    return {"cx": (x1 + x2) / 2 / fw, "top": y1 / fh,
-            "bottom": y2 / fh, "h": (y2 - y1) / fh, "ts": time.time()}
+    return {
+        "cx": (x1 + x2) / 2 / fw,
+        "top": y1 / fh,
+        "bottom": y2 / fh,
+        "h": (y2 - y1) / fh,
+        "ts": time.time()
+    }
+
+
+def _smooth(prev, det):
+    """Exponentially smooth detection values to reduce jumping."""
+    if prev is None:
+        return det
+    a = SMOOTH
+    return {
+        "cx":     prev["cx"]     * (1 - a) + det["cx"]     * a,
+        "top":    prev["top"]    * (1 - a) + det["top"]     * a,
+        "bottom": prev["bottom"] * (1 - a) + det["bottom"]  * a,
+        "h":      prev["h"]      * (1 - a) + det["h"]       * a,
+        "ts":     det["ts"]
+    }
 
 
 def _detect_loop():
-    """Continuously detect the person, publish the latest box, and show a live window."""
-    global _latest
+    global _latest, _smoothed
     conf = _cfg["conf"]
     _dbg_count = 0
     while _running:
@@ -113,63 +117,69 @@ def _detect_loop():
         fh, fw = frame.shape[:2]
         results = _model(frame, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)
         det = _biggest_person(results[0].boxes, fw, fh)
+
         with _lock:
             _latest = det
+            if det:
+                _smoothed = _smooth(_smoothed, det)
+            else:
+                _smoothed = None
 
-        # draw detection box and head tracking dot on frame
+        # --- live display ---
         display = frame.copy()
-        fh_disp, fw_disp = display.shape[:2]
+        fh_d, fw_d = display.shape[:2]
+        s = _smoothed
 
-        if det:
-            # full body box
-            x1 = int((det["cx"] - det["h"] * 0.3) * fw_disp)
-            x2 = int((det["cx"] + det["h"] * 0.3) * fw_disp)
-            y1 = int(det["top"] * fh_disp)
-            y2 = int(det["bottom"] * fh_disp)
+        if s:
+            # body box (using actual pixel coords from smoothed)
+            x1 = int((s["cx"] - s["h"] * 0.3) * fw_d)
+            x2 = int((s["cx"] + s["h"] * 0.3) * fw_d)
+            y1 = int(s["top"] * fh_d)
+            y2 = int(s["bottom"] * fh_d)
             cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-            # head center dot — top 15% of the box
-            head_x = int(det["cx"] * fw_disp)
-            head_y = int((det["top"] + det["h"] * 0.10) * fh_disp)
-            cv2.circle(display, (head_x, head_y), 8, (0, 0, 255), -1)   # red filled dot
-            cv2.circle(display, (head_x, head_y), 12, (255, 255, 255), 2)  # white ring
-
-            # crosshair lines from head dot
+            # head dot — top 10% of bounding box
+            head_x = int(s["cx"] * fw_d)
+            head_y = int((s["top"] + s["h"] * 0.10) * fh_d)
+            cv2.circle(display, (head_x, head_y), 8, (0, 0, 255), -1)
+            cv2.circle(display, (head_x, head_y), 13, (255, 255, 255), 2)
             cv2.line(display, (head_x - 20, head_y), (head_x + 20, head_y), (0, 0, 255), 1)
             cv2.line(display, (head_x, head_y - 20), (head_x, head_y + 20), (0, 0, 255), 1)
 
-            # target head position line (where we want the head to be)
-            target_y = int(_cfg["target_head_y"] * fh_disp)
-            cv2.line(display, (0, target_y), (fw_disp, target_y), (0, 255, 255), 1)
+            # target head height line (yellow)
+            ty = int(_cfg["target_head_y"] * fh_d)
+            cv2.line(display, (0, ty), (fw_d, ty), (0, 255, 255), 1)
 
-            cv2.putText(display, f"h:{det['h']:.2f} cx:{det['cx']:.2f}",
-                        (x1, max(y1 - 8, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            status = "TRACKING"
-            color = (0, 255, 0)
+            # distance indicator
+            dist_pct = int(s["h"] * 100)
+            target_pct = int(_cfg["target_dist_h"] * 100)
+            dist_color = (0, 255, 0) if abs(s["h"] - _cfg["target_dist_h"]) < 0.1 else (0, 165, 255)
+            cv2.putText(display, f"dist:{dist_pct}% target:{target_pct}%",
+                        (8, fh_d - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, dist_color, 2)
+            cv2.putText(display, "TRACKING", (8, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         else:
-            # show center crosshair when searching
-            cx, cy = fw_disp // 2, fh_disp // 2
+            cx, cy = fw_d // 2, fh_d // 2
             cv2.line(display, (cx - 30, cy), (cx + 30, cy), (0, 165, 255), 2)
             cv2.line(display, (cx, cy - 30), (cx, cy + 30), (0, 165, 255), 2)
-            status = "SEARCHING..."
-            color = (0, 165, 255)
+            cv2.putText(display, "SEARCHING...", (8, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
 
-        cv2.putText(display, status, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        cv2.imshow("Drone Camera — press ESC to close", display)
+        cv2.imshow("Drone Camera", display)
         cv2.waitKey(1)
 
-        # print detection status every 2 seconds
         _dbg_count += 1
         if _dbg_count % 16 == 0:
-            if det:
-                print(f"[FOLLOW] person detected — cx:{det['cx']:.2f} h:{det['h']:.2f} top:{det['top']:.2f}")
+            if s:
+                print(f"[FOLLOW] person — cx:{s['cx']:.2f} h:{s['h']:.2f} top:{s['top']:.2f}")
             else:
                 print("[FOLLOW] no person detected — searching...")
 
 
 def start(state, config):
-    global _cfg, _cam, _model, _imgsz, _running
+    global _cfg, _cam, _model, _imgsz, _running, _smoothed
     _cfg = {**DEFAULTS, **config.get("tuning", {}).get("follow", {})}
+    _smoothed = None
     _ensure_route()
     print("[FOLLOW] starting camera + detector...")
     _cam = DroneCamera(RTSP)
@@ -199,35 +209,36 @@ def _gated(error, gain, deadzone):
 
 
 def controller(state):
-    """Read the latest detection and return (roll, pitch, throttle, yaw). 128 = hold."""
     with _lock:
-        det = _latest
+        det = _smoothed   # use smoothed detection, not raw
 
-    # No person found / stale -> spin slowly in place to search
     if det is None or (time.time() - det["ts"]) > _cfg["stale_s"]:
         return CENTER, CENTER, CENTER, _stick(_cfg["search_yaw"], _cfg["max_yaw"])
 
     dz = _cfg["deadzone"]
 
-    # YAW: turn to keep the person centred left/right
-    yaw_dev = _gated(det["cx"] - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
+    # head position (top 10% of box)
+    head_x = det["cx"]
+    head_y = det["top"] + det["h"] * 0.10
 
-    # PITCH: hold follow distance, never collide
+    # YAW: center the HEAD left/right (not body center)
+    yaw_dev = _gated(head_x - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
+
+    # PITCH: hold follow distance based on body size
     body_cut = det["top"] < _cfg["edge_margin"] and det["bottom"] > (1 - _cfg["edge_margin"])
     if det["h"] > _cfg["too_close_h"] or body_cut:
-        pitch_dev = -_cfg["max_pitch"]             # too close -> full back-off
+        pitch_dev = -_cfg["max_pitch"]
     else:
         pitch_dev = _gated(_cfg["target_dist_h"] - det["h"], _cfg["pitch_gain"], dz) * _cfg["pitch_sign"]
 
-    # THROTTLE: keep head at target height in frame
-    thr_dev = -_gated(det["top"] - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
+    # THROTTLE: keep HEAD at target height (not body center)
+    thr_dev = -_gated(head_y - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
 
     roll = CENTER
     pitch = _stick(pitch_dev, _cfg["max_pitch"])
     throttle = _stick(thr_dev, _cfg["max_throttle"])
     yaw = _stick(yaw_dev, _cfg["max_yaw"])
 
-    # debug: print pitch every ~1 second so we can see what direction it's pushing
     if not hasattr(controller, "_dbg"):
         controller._dbg = 0
     controller._dbg += 1
