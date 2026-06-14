@@ -96,7 +96,7 @@ def main():
         return
 
     print(f"[DET] opening {RTSP} (ffmpeg subprocess — survives the lossy stream) ...")
-    cam = DroneCamera(RTSP, debug=True)            # auto-detect size + show ffmpeg errors
+    cam = DroneCamera(RTSP, debug=True)            # uses default 640x352, shows ffmpeg errors
 
     writer = None
     if LIVE:

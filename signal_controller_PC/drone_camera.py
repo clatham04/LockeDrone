@@ -26,6 +26,9 @@ import numpy as np
 # discarding) is what protects us from a decoder crash.
 FFMPEG_OPTS = ["-rtsp_transport", "udp", "-err_detect", "ignore_err"]
 
+# the drone's known native stream resolution
+DEFAULT_WIDTH, DEFAULT_HEIGHT = 640, 352
+
 
 def ensure_route(url):
     """Pin the drone's IP via a host route (Windows). The home network and the drone's AP
@@ -40,30 +43,8 @@ def ensure_route(url):
         )  # ignore errors — already exists is fine
 
 
-def probe_size(url, fallback=(640, 352), retries=3):
-    """Ask ffprobe for the stream's actual WxH, with retries if it fails."""
-    if not shutil.which("ffprobe"):
-        print(f"[CAM] ffprobe not found — using fallback size {fallback[0]}x{fallback[1]}")
-        return fallback
-    for attempt in range(retries):
-        try:
-            out = subprocess.run(
-                ["ffprobe", "-v", "error", "-rtsp_transport", "udp", "-select_streams", "v:0",
-                 "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", url],
-                capture_output=True, text=True, timeout=12).stdout.strip()
-            w, h = (int(x) for x in out.split("x")[:2])
-            if w > 0 and h > 0:
-                return w, h
-            print(f"[CAM] probe returned 0x0 (attempt {attempt+1}/{retries}), retrying...")
-        except Exception as e:
-            print(f"[CAM] probe failed (attempt {attempt+1}/{retries}): {e}")
-        time.sleep(2)
-    print(f"[CAM] probe failed after {retries} attempts — using fallback {fallback[0]}x{fallback[1]}")
-    return fallback
-
-
 class DroneCamera:
-    def __init__(self, url, width=640, height=352, debug=False):
+    def __init__(self, url, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, debug=False):
         if not shutil.which("ffmpeg"):
             raise RuntimeError(
                 "ffmpeg CLI not found. Download it from https://ffmpeg.org/download.html "

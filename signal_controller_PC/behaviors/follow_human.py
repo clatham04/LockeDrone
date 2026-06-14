@@ -1,11 +1,17 @@
 r"""follow_human — the drone follows a person, vision-driven and flight-safe.
 
-Searches by spinning until a person is found, then tracks the largest person:
-- YAW: keeps them centered left/right
-- PITCH: holds follow distance (target_dist_h)
-- THROTTLE: keeps head at target height in frame
-- Detection is smoothed to prevent jumping between body parts
+Searches by spinning slowly until a person is found, then tracks them:
+  - YAW:      keeps the head centered left/right
+  - PITCH:    holds a follow distance, estimated from head width (target_dist_ft)
+  - THROTTLE: keeps the head at a target height in the frame (target_head_y)
+
+Detection is exponentially smoothed to avoid jumping between body parts/people.
+
+Distance estimation uses the head's apparent width (roughly constant across
+viewing angles, ~0.5 ft for an adult) and the camera's field of view to convert
+pixel size into real-world feet via the pinhole camera model.
 """
+import math
 import os
 import subprocess
 import threading
@@ -27,8 +33,6 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 
 DEFAULTS = {
     "conf": 0.20,
-    "target_dist_h": 0.70,
-    "too_close_h": 0.92,
     "edge_margin": 0.0,
     "target_head_y": 0.35,
     "deadzone": 0.05,
@@ -44,17 +48,18 @@ DEFAULTS = {
     "stale_s": 0.8,
     "search_yaw": 40,
 
-    # --- distance calibration (head-width based) ---
-    # Average adult head width is ~0.5 ft (6 inches), and stays roughly consistent
-    # regardless of viewing angle (front, side, etc) — unlike shoulder width.
-    # We estimate head width in pixels as a fraction of the body box width, then
-    # use the camera's horizontal field of view to convert pixel size -> real distance.
-    "head_width_ft": 0.5,        # average adult head width
-    "head_width_frac": 0.55,     # head width as a fraction of body box width (top portion)
-    "camera_hfov_deg": 60.0,     # camera horizontal field of view in degrees (typical small drone cam)
-    "frame_width_px": 640,       # native stream width
-    "target_dist_ft": 11.0,      # desired follow distance in feet
-    "too_close_ft": 6.0,         # back off if closer than this
+    # --- distance estimation (head-width based) ---
+    # Average adult head width is ~0.5 ft (6 inches) and stays roughly consistent
+    # across viewing angles (front, side, etc) — unlike shoulder width, which
+    # shrinks when a person turns sideways. We estimate head width as a fraction
+    # of the YOLO body box width, then convert pixel size -> real distance using
+    # the camera's horizontal field of view (pinhole camera model).
+    "head_width_ft": 0.5,
+    "head_width_frac": 0.55,
+    "camera_hfov_deg": 60.0,
+    "frame_width_px": 640,
+    "target_dist_ft": 11.0,
+    "too_close_ft": 6.0,
 }
 
 _cfg = dict(DEFAULTS)
@@ -63,11 +68,11 @@ _model = None
 _imgsz = 256
 _running = False
 _lock = threading.Lock()
-_latest = None      # raw latest detection
-_smoothed = None    # exponentially smoothed detection
+_smoothed = None    # exponentially smoothed detection (or None if nothing detected)
 
 
 def _ensure_route():
+    """Pin the drone's IP via a host route on Windows."""
     subprocess.run(
         ["route", "add", "192.168.1.1", "mask", "255.255.255.255", "192.168.1.1"],
         capture_output=True
@@ -75,6 +80,7 @@ def _ensure_route():
 
 
 def _load_model():
+    """Prefer the fast ncnn export; fall back to the .pt."""
     ncnn = os.path.join(ROOT, "yolo11n_ncnn_model")
     meta = os.path.join(ncnn, "metadata.yaml")
     if os.path.isfile(meta):
@@ -85,6 +91,7 @@ def _load_model():
 
 
 def _biggest_person(boxes, fw, fh):
+    """Largest person box -> frame-fraction + pixel summary, or None."""
     best, best_area = None, 0.0
     for b in boxes:
         x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
@@ -99,10 +106,8 @@ def _biggest_person(boxes, fw, fh):
         "top": y1 / fh,
         "bottom": y2 / fh,
         "h": (y2 - y1) / fh,
-        "w": (x2 - x1) / fw,        # box width as fraction of frame (shoulder span)
-        "px_h": (y2 - y1),          # raw pixel height (for calibrated distance)
-        "px_w": (x2 - x1),          # raw pixel width (for calibrated distance)
-        "ts": time.time()
+        "px_w": (x2 - x1),     # raw pixel width, used for distance estimation
+        "ts": time.time(),
     }
 
 
@@ -113,109 +118,100 @@ def _smooth(prev, det):
     a = SMOOTH
     return {
         "cx":     prev["cx"]     * (1 - a) + det["cx"]     * a,
-        "top":    prev["top"]    * (1 - a) + det["top"]     * a,
-        "bottom": prev["bottom"] * (1 - a) + det["bottom"]  * a,
-        "h":      prev["h"]      * (1 - a) + det["h"]       * a,
-        "w":      prev["w"]      * (1 - a) + det["w"]       * a,
-        "px_h":   prev["px_h"]   * (1 - a) + det["px_h"]    * a,
-        "px_w":   prev["px_w"]   * (1 - a) + det["px_w"]    * a,
-        "ts":     det["ts"]
+        "top":    prev["top"]    * (1 - a) + det["top"]    * a,
+        "bottom": prev["bottom"] * (1 - a) + det["bottom"] * a,
+        "h":      prev["h"]      * (1 - a) + det["h"]      * a,
+        "px_w":   prev["px_w"]   * (1 - a) + det["px_w"]   * a,
+        "ts":     det["ts"],
     }
 
 
 def _estimate_distance_ft(det):
-    """Estimate real-world distance in feet using the head's apparent width.
+    """Estimate distance in feet from the head's apparent width (pinhole camera model).
 
-    Head width stays roughly constant (~0.5 ft) across viewing angles, unlike
-    shoulder/body width which shrinks when a person turns sideways.
-
-    Pinhole camera model:
-        focal_px = (frame_width_px / 2) / tan(hfov_deg/2 in radians)
+        focal_px    = (frame_width_px / 2) / tan(hfov_deg/2)
         distance_ft = (head_width_ft * focal_px) / head_width_px
     """
-    import math
-
     px_w = det.get("px_w", 0)
     if px_w <= 0:
         return None
 
-    # estimate head width in pixels as a fraction of the body box width
     head_px_w = px_w * _cfg["head_width_frac"]
     if head_px_w <= 0:
         return None
 
     hfov_rad = math.radians(_cfg["camera_hfov_deg"])
     focal_px = (_cfg["frame_width_px"] / 2) / math.tan(hfov_rad / 2)
-
     return (_cfg["head_width_ft"] * focal_px) / head_px_w
 
 
+def _draw_overlay(frame, det):
+    """Draw the tracking overlay (body box, head dot, target lines, distance) onto frame."""
+    fh, fw = frame.shape[:2]
+
+    if det is None:
+        cx, cy = fw // 2, fh // 2
+        cv2.line(frame, (cx - 30, cy), (cx + 30, cy), (0, 165, 255), 2)
+        cv2.line(frame, (cx, cy - 30), (cx, cy + 30), (0, 165, 255), 2)
+        cv2.putText(frame, "SEARCHING...", (8, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+        return frame
+
+    # body box
+    x1 = int((det["cx"] - det["h"] * 0.3) * fw)
+    x2 = int((det["cx"] + det["h"] * 0.3) * fw)
+    y1 = int(det["top"] * fh)
+    y2 = int(det["bottom"] * fh)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+    # head dot — top 10% of bounding box
+    head_x = int(det["cx"] * fw)
+    head_y = int((det["top"] + det["h"] * 0.10) * fh)
+    cv2.circle(frame, (head_x, head_y), 8, (0, 0, 255), -1)
+    cv2.circle(frame, (head_x, head_y), 13, (255, 255, 255), 2)
+    cv2.line(frame, (head_x - 20, head_y), (head_x + 20, head_y), (0, 0, 255), 1)
+    cv2.line(frame, (head_x, head_y - 20), (head_x, head_y + 20), (0, 0, 255), 1)
+
+    # target head height line (yellow)
+    ty = int(_cfg["target_head_y"] * fh)
+    cv2.line(frame, (0, ty), (fw, ty), (0, 255, 255), 1)
+
+    # distance readout
+    dist_ft = _estimate_distance_ft(det)
+    target_ft = _cfg["target_dist_ft"]
+    if dist_ft is not None:
+        color = (0, 255, 0) if abs(dist_ft - target_ft) < 1.0 else (0, 165, 255)
+        cv2.putText(frame, f"dist:{dist_ft:.1f}ft target:{target_ft:.1f}ft (px_w:{int(det['px_w'])})",
+                    (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    cv2.putText(frame, "TRACKING", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    return frame
+
+
 def _detect_loop():
-    global _latest, _smoothed
+    global _smoothed
     conf = _cfg["conf"]
-    _dbg_count = 0
+    dbg_count = 0
+
     while _running:
         frame = _cam.read()
         if frame is None:
             time.sleep(0.02)
             continue
+
         fh, fw = frame.shape[:2]
         results = _model(frame, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)
         det = _biggest_person(results[0].boxes, fw, fh)
 
         with _lock:
-            _latest = det
-            if det:
-                _smoothed = _smooth(_smoothed, det)
-            else:
-                _smoothed = None
+            _smoothed = _smooth(_smoothed, det) if det else None
+            s = _smoothed
 
-        # --- live display ---
-        display = frame.copy()
-        fh_d, fw_d = display.shape[:2]
-        s = _smoothed
-
-        if s:
-            # body box (using actual pixel coords from smoothed)
-            x1 = int((s["cx"] - s["h"] * 0.3) * fw_d)
-            x2 = int((s["cx"] + s["h"] * 0.3) * fw_d)
-            y1 = int(s["top"] * fh_d)
-            y2 = int(s["bottom"] * fh_d)
-            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-            # head dot — top 10% of bounding box
-            head_x = int(s["cx"] * fw_d)
-            head_y = int((s["top"] + s["h"] * 0.10) * fh_d)
-            cv2.circle(display, (head_x, head_y), 8, (0, 0, 255), -1)
-            cv2.circle(display, (head_x, head_y), 13, (255, 255, 255), 2)
-            cv2.line(display, (head_x - 20, head_y), (head_x + 20, head_y), (0, 0, 255), 1)
-            cv2.line(display, (head_x, head_y - 20), (head_x, head_y + 20), (0, 0, 255), 1)
-
-            # target head height line (yellow)
-            ty = int(_cfg["target_head_y"] * fh_d)
-            cv2.line(display, (0, ty), (fw_d, ty), (0, 255, 255), 1)
-
-            # distance indicator (feet, calibrated)
-            dist_ft = _estimate_distance_ft(s)
-            target_ft = _cfg["target_dist_ft"]
-            if dist_ft is not None:
-                dist_color = (0, 255, 0) if abs(dist_ft - target_ft) < 1.0 else (0, 165, 255)
-                cv2.putText(display, f"dist:{dist_ft:.1f}ft target:{target_ft:.1f}ft  (px_w:{int(s['px_w'])})",
-                            (8, fh_d - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, dist_color, 2)
-            cv2.putText(display, "TRACKING", (8, 24),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        else:
-            cx, cy = fw_d // 2, fh_d // 2
-            cv2.line(display, (cx - 30, cy), (cx + 30, cy), (0, 165, 255), 2)
-            cv2.line(display, (cx, cy - 30), (cx, cy + 30), (0, 165, 255), 2)
-            cv2.putText(display, "SEARCHING...", (8, 24),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-
-        cv2.imshow("Drone Camera", display)
+        cv2.imshow("Drone Camera", _draw_overlay(frame, s))
         cv2.waitKey(1)
 
-        _dbg_count += 1
-        if _dbg_count % 16 == 0:
+        dbg_count += 1
+        if dbg_count % 16 == 0:
             if s:
                 print(f"[FOLLOW] person — cx:{s['cx']:.2f} h:{s['h']:.2f} top:{s['top']:.2f}")
             else:
@@ -242,22 +238,28 @@ def stop(state, config):
     if _cam:
         _cam.stop()
     cv2.destroyAllWindows()
+    for _ in range(5):
+        cv2.waitKey(1)  # flush window-close events on Windows
     print("[FOLLOW] stopped.")
 
 
 def _stick(deviation, limit):
+    """Clamp a deviation to +/- limit and return an absolute stick value (centered at 128)."""
     deviation = max(-limit, min(limit, deviation))
     return int(CENTER + deviation)
 
 
 def _gated(error, gain, deadzone):
+    """Proportional output, but 0 inside the deadzone (so we hold still when you do)."""
     return 0.0 if abs(error) < deadzone else gain * error
 
 
 def controller(state):
+    """Read the latest smoothed detection and return (roll, pitch, throttle, yaw)."""
     with _lock:
-        det = _smoothed   # use smoothed detection, not raw
+        det = _smoothed
 
+    # Lost: spin slowly in place to search
     if det is None or (time.time() - det["ts"]) > _cfg["stale_s"]:
         return CENTER, CENTER, CENTER, _stick(_cfg["search_yaw"], _cfg["max_yaw"])
 
@@ -267,25 +269,23 @@ def controller(state):
     head_x = det["cx"]
     head_y = det["top"] + det["h"] * 0.10
 
-    # YAW: center the HEAD left/right (not body center)
+    # YAW: center the head left/right
     yaw_dev = _gated(head_x - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
 
-    # PITCH: hold follow distance using calibrated feet estimate
+    # PITCH: hold follow distance (estimated in feet from head width)
     dist_ft = _estimate_distance_ft(det)
     body_cut = det["top"] < _cfg["edge_margin"] and det["bottom"] > (1 - _cfg["edge_margin"])
 
     if dist_ft is None:
         pitch_dev = 0.0
     elif dist_ft < _cfg["too_close_ft"] or body_cut:
-        pitch_dev = -_cfg["max_pitch"]              # too close -> back off
+        pitch_dev = -_cfg["max_pitch"]              # too close -> full back-off
     else:
-        # error in feet: positive -> too far -> move forward
-        # normalize: gain tuned per-foot, deadzone in feet (~0.5 ft)
-        ft_error = dist_ft - _cfg["target_dist_ft"]
+        ft_error = dist_ft - _cfg["target_dist_ft"]  # positive -> too far -> move forward
         ft_deadzone = 0.5
         pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"], ft_deadzone) * _cfg["pitch_sign"]
 
-    # THROTTLE: keep HEAD at target height (not body center)
+    # THROTTLE: keep head at target height
     thr_dev = -_gated(head_y - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
 
     roll = CENTER
@@ -293,6 +293,7 @@ def controller(state):
     throttle = _stick(thr_dev, _cfg["max_throttle"])
     yaw = _stick(yaw_dev, _cfg["max_yaw"])
 
+    # periodic debug print
     if not hasattr(controller, "_dbg"):
         controller._dbg = 0
     controller._dbg += 1

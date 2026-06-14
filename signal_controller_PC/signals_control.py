@@ -8,6 +8,7 @@ Keys (active immediately after takeoff):
     SPACE = emergency motor cut
     Ctrl+C = gentle land
 """
+import ctypes
 import importlib
 import json
 import os
@@ -35,6 +36,26 @@ def _on_q():
 def _on_space():
     if _keys_active:
         globals().update(_key_stop=True)
+
+
+def _reset_console():
+    """Restore normal terminal input mode (echo, line buffering).
+
+    cv2 windows + keyboard hooks can leave the Windows console in a broken
+    state where typing afterward doesn't echo or work. This restores it.
+    """
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        ENABLE_ECHO_INPUT = 0x0004
+        ENABLE_LINE_INPUT = 0x0002
+        ENABLE_PROCESSED_INPUT = 0x0001
+        mode = ctypes.c_ulong()
+        kernel32.GetConsoleMode(handle, ctypes.byref(mode))
+        new_mode = mode.value | ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT
+        kernel32.SetConsoleMode(handle, new_mode)
+    except Exception:
+        pass
 
 
 def load_config():
@@ -155,6 +176,7 @@ def main():
                 pass
         wc._running = False
         print("[CTRL] done.")
+        _reset_console()
 
 
 if __name__ == "__main__":

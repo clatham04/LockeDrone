@@ -2,13 +2,13 @@
 
 Launches the full drone program with follow_human as the active behavior:
   - Connects to drone WiFi
+  - Loads camera + YOLO model
   - Calibrates gyro
-  - Takes off and hovers at ~6 feet
+  - Takes off and starts flying
   - Spins slowly to search for a person
-  - Locks on and follows the closest person
+  - Locks on and follows them at ~target_dist_ft (see config.json)
   - Q = gentle land   |   SPACE = emergency stop   |   Ctrl+C = gentle land
 
-Run as Administrator:
     python run.py
 """
 import json
