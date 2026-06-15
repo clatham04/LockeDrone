@@ -115,5 +115,204 @@ can add a drone behavior without touching the connector.
   socket to `wlan0` in `wifi_control.py`.
 
 
-The drone this time just stayed in place and didnt move at all when i was in front of it. i even got closer and moved around and it didn't lock on to me at all.
+[WIFI] already connected to 'FLOW-UFO-44a562'
+[CTRL] on FLOW-UFO-44a562
+[CTRL] behavior: follow_human
+[WIFI] socket bound to 192.168.1.100
+[WIFI] heartbeat + control -> 192.168.1.1:7099
+[CTRL] loading camera and model — please wait...
+[FOLLOW] starting camera + detector...
+[CAM] stream size: 640x352
+[FOLLOW] model ready @ 256px — searching for a person...
+[FOLLOW] spinning to search. Will lock on when someone comes into view.
+[CTRL] ready — starting calibration.
+[CTRL] Put the drone FLAT and STILL on a level floor. Calibrating in 3s...
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+[CTRL] calibrating gyro...
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+[CTRL] calibrated.
+[CTRL] taking off...
+[FOLLOW] no person detected — searching...
+[CTRL] flying.
+[CTRL] keys ready —  Q = gentle land   |   SPACE = emergency stop
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 1s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 2s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 3s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 4s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 5s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 6s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 7s
+[FOLLOW] no person detected — searching...
+  ...follow_human 8s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 9s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 10s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 11s
+[FOLLOW] no person detected — searching...
+[FOLLOW] person — cx:0.89 h:0.81 top:0.01
+[FOLLOW] pitch=128 (HOLD)  dist=10.9ft  target=11.0ft
+  ...follow_human 12s
+[FOLLOW] person — cx:0.50 h:0.86 top:0.00
+[FOLLOW] person — cx:0.52 h:0.81 top:0.01
+[FOLLOW] pitch=128 (HOLD)  dist=10.6ft  target=11.0ft
+  ...follow_human 13s
+[FOLLOW] person — cx:0.54 h:0.75 top:0.00
+[FOLLOW] person — cx:0.56 h:0.88 top:0.11
+[FOLLOW] pitch=128 (HOLD)  dist=11.5ft  target=11.0ft
+  ...follow_human 14s
+[FOLLOW] person — cx:0.57 h:0.84 top:0.09
+[FOLLOW] person — cx:0.58 h:0.85 top:0.05
+[FOLLOW] pitch=143 (FORWARD)  dist=11.6ft  target=11.0ft
+  ...follow_human 15s
+[FOLLOW] person — cx:0.62 h:0.69 top:0.31
+[FOLLOW] pitch=128 (HOLD)  dist=11.2ft  target=11.0ft
+[FOLLOW] person — cx:0.63 h:0.72 top:0.27
+  ...follow_human 16s
+[FOLLOW] person — cx:0.63 h:0.68 top:0.31
+[FOLLOW] pitch=88 (BACKWARD)  dist=9.5ft  target=11.0ft
+[FOLLOW] person — cx:0.61 h:0.78 top:0.19
+  ...follow_human 17s
+[FOLLOW] person — cx:0.63 h:0.57 top:0.43
+[FOLLOW] pitch=145 (FORWARD)  dist=11.7ft  target=11.0ft
+[FOLLOW] person — cx:0.61 h:0.77 top:0.05
+  ...follow_human 18s
+[FOLLOW] person — cx:0.64 h:0.59 top:0.00
+[FOLLOW] pitch=78 (BACKWARD)  dist=9.0ft  target=11.0ft
+[FOLLOW] person — cx:0.68 h:0.71 top:0.11
+  ...follow_human 19s
+[FOLLOW] person — cx:0.71 h:0.49 top:0.50
+[FOLLOW] pitch=178 (FORWARD)  dist=13.1ft  target=11.0ft
+  ...follow_human 20s
+[FOLLOW] person — cx:0.63 h:0.56 top:0.42
+[FOLLOW] person — cx:0.64 h:0.68 top:0.11
+[FOLLOW] pitch=172 (FORWARD)  dist=12.7ft  target=11.0ft
+  ...follow_human 21s
+[FOLLOW] person — cx:0.66 h:0.70 top:0.28
+[FOLLOW] person — cx:0.75 h:0.22 top:0.78
+[FOLLOW] pitch=78 (BACKWARD)  dist=8.2ft  target=11.0ft
+  ...follow_human 22s
+[FOLLOW] person — cx:0.75 h:0.42 top:0.58
+[FOLLOW] person — cx:0.70 h:0.64 top:0.36
+[FOLLOW] pitch=128 (HOLD)  dist=10.6ft  target=11.0ft
+  ...follow_human 23s
+[FOLLOW] person — cx:0.82 h:0.31 top:0.69
+[FOLLOW] person — cx:0.71 h:0.50 top:0.50
+[FOLLOW] pitch=78 (BACKWARD)  dist=8.0ft  target=11.0ft
+  ...follow_human 24s
+[FOLLOW] person — cx:0.81 h:0.67 top:0.31
+[FOLLOW] person — cx:0.61 h:0.61 top:0.27
+[FOLLOW] pitch=178 (FORWARD)  dist=14.2ft  target=11.0ft
+  ...follow_human 25s
+[FOLLOW] person — cx:0.64 h:0.61 top:0.28
+[FOLLOW] person — cx:0.67 h:0.42 top:0.57
+[FOLLOW] pitch=128 (HOLD)  dist=10.7ft  target=11.0ft
+  ...follow_human 26s
+[FOLLOW] person — cx:0.66 h:0.57 top:0.43
+[FOLLOW] person — cx:0.69 h:0.46 top:0.53
+[FOLLOW] pitch=147 (FORWARD)  dist=11.8ft  target=11.0ft
+  ...follow_human 27s
+[FOLLOW] person — cx:0.69 h:0.57 top:0.36
+[FOLLOW] person — cx:0.68 h:0.54 top:0.42
+[FOLLOW] pitch=177 (FORWARD)  dist=12.9ft  target=11.0ft
+  ...follow_human 28s
+[FOLLOW] person — cx:0.66 h:0.54 top:0.22
+[FOLLOW] person — cx:0.68 h:0.57 top:0.35
+[FOLLOW] pitch=178 (FORWARD)  dist=14.6ft  target=11.0ft
+  ...follow_human 29s
+[FOLLOW] person — cx:0.68 h:0.55 top:0.38
+[FOLLOW] pitch=178 (FORWARD)  dist=15.1ft  target=11.0ft
+[FOLLOW] person — cx:0.70 h:0.51 top:0.48
+  ...follow_human 30s
+[FOLLOW] person — cx:0.70 h:0.57 top:0.42
+[FOLLOW] pitch=178 (FORWARD)  dist=14.8ft  target=11.0ft
+[FOLLOW] person — cx:0.68 h:0.58 top:0.38
+  ...follow_human 31s
+[FOLLOW] person — cx:0.69 h:0.62 top:0.37
+[FOLLOW] pitch=175 (FORWARD)  dist=12.9ft  target=11.0ft
+  ...follow_human 32s
+[FOLLOW] person — cx:0.62 h:0.43 top:0.56
+[FOLLOW] person — cx:0.59 h:0.40 top:0.60
+[FOLLOW] pitch=162 (FORWARD)  dist=12.4ft  target=11.0ft
+  ...follow_human 33s
+[FOLLOW] person — cx:0.51 h:0.30 top:0.70
+[FOLLOW] no person detected — searching...
+  ...follow_human 34s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 35s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 36s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 37s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 38s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 39s
+[FOLLOW] no person detected — searching...
+  ...follow_human 40s
+[FOLLOW] no person detected — searching...
+[FOLLOW] no person detected — searching...
+  ...follow_human 41s
+[FOLLOW] person — cx:0.95 h:0.56 top:0.07
+[FOLLOW] person — cx:0.47 h:0.54 top:0.03
+[FOLLOW] pitch=178 (FORWARD)  dist=14.1ft  target=11.0ft
+  ...follow_human 42s
+[FOLLOW] person — cx:0.18 h:0.40 top:0.00
+[FOLLOW] person — cx:0.39 h:0.49 top:0.20
+[FOLLOW] pitch=178 (FORWARD)  dist=14.2ft  target=11.0ft
+  ...follow_human 43s
+[FOLLOW] person — cx:0.61 h:0.38 top:0.02
+[FOLLOW] person — cx:0.57 h:0.34 top:0.00
+[FOLLOW] pitch=178 (FORWARD)  dist=19.3ft  target=11.0ft
+  ...follow_human 44s
+[FOLLOW] person — cx:0.53 h:0.39 top:0.01
+[FOLLOW] pitch=178 (FORWARD)  dist=17.5ft  target=11.0ft
+[FOLLOW] person — cx:0.54 h:0.38 top:0.07
+  ...follow_human 45s
+[FOLLOW] person — cx:0.54 h:0.38 top:0.11
+[FOLLOW] pitch=178 (FORWARD)  dist=21.3ft  target=11.0ft
+[FOLLOW] person — cx:0.54 h:0.39 top:0.17
 
+[CTRL] landing — descending slowly, do not interrupt...
+[FOLLOW] person — cx:0.56 h:0.41 top:0.27
+[FOLLOW] person — cx:0.58 h:0.38 top:0.62
+[FOLLOW] person — cx:0.60 h:0.39 top:0.57
+[FOLLOW] person — cx:0.63 h:0.40 top:0.43
+[FOLLOW] person — cx:0.67 h:0.42 top:0.20
+[FOLLOW] person — cx:0.71 h:0.37 top:0.09
+[FOLLOW] person — cx:0.76 h:0.38 top:0.01
+[FOLLOW] person — cx:0.79 h:0.31 top:0.00
+[CTRL] landed.
+[FOLLOW] stopped.
+[CTRL] done.
+
+the drone was locking on to me and tracking me, but it is a little windy and started blowing away. edit code to have some wind resistance also since the dron is pretty high up, adijust the q (slow landing) to land comepletly. its sutting off in the air and falling.
