@@ -5,6 +5,9 @@
 opencv-python           # cv2 — pull/decode the RTSP stream
 numpy                   # frame buffer handling
 
-# --- Human detection (detect_test.py) ---
-ultralytics             # YOLO person detection
+# --- Human detection (detect_test.py / follow_human.py) ---
+ultralytics             # YOLO person + pose detection
 pyyaml                  # read model metadata.yaml
+
+# --- Flight controls (signals_control.py) ---
+keyboard                # Q = land, SPACE = emergency stop hotkeys (run terminal as Administrator)
