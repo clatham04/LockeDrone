@@ -1,15 +1,14 @@
 # signal_controller_PC — Python dependencies
 # Install in your virtual environment:  pip install -r requirements.txt
 #
-# This pulls the CUDA (GPU) build of PyTorch so the pose model runs fast on an NVIDIA card
-# (e.g. RTX 3080). The startup line of run.py / detect_test.py will say "on GPU (CUDA)".
-#
-# >> NO NVIDIA GPU? Delete the next 3 lines (the --extra-index-url and the two +cu124 lines).
-#    ultralytics will then install the regular CPU build of torch automatically.
-
---extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.5.1+cu124          # GPU PyTorch, CUDA 12.4
-torchvision==0.20.1+cu124   # must match the torch version
+# PyTorch (GPU): the plain torch/torchvision below install whatever pip resolves for your
+# system. To FORCE the NVIDIA GPU (CUDA) build — much faster for the pose model — install it
+# from the official selector instead: https://pytorch.org/get-started/locally/
+# (choose Pip + Windows + CUDA). It gives the exact command for the current CUDA, e.g.:
+#     python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# Verify it worked:  python -c "import torch; print(torch.cuda.is_available())"   ->  True
+torch
+torchvision
 
 # --- Camera (drone_camera.py / detect_test.py) ---
 opencv-python           # cv2 — pull/decode the RTSP stream
