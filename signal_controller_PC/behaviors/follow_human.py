@@ -63,7 +63,9 @@ DEFAULTS = {
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
-    "search_yaw": 40,
+    "search_yaw": 28,             # yaw amount during a search burst (gentle = less drift)
+    "search_step_s": 0.45,        # how long each yaw burst lasts
+    "search_hold_s": 0.8,         # pause between bursts to settle + look (no movement)
 
     # --- tracking filter + prediction (alpha-beta) ---
     "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
@@ -93,6 +95,8 @@ _running = False
 _lock = threading.Lock()
 _track = None    # filtered head track: {cx, cy, vx, vy, hw, box, src, ts} or None
 _clahe = None    # low-light contrast booster (created lazily)
+_search_t = 0.0          # stepped-search phase timer
+_search_yawing = False   # True = yaw burst, False = pause-and-look
 
 
 def _enhance(frame):
@@ -302,10 +306,11 @@ def _detect_loop():
 
 
 def start(state, config):
-    global _cfg, _cam, _model, _imgsz, _running, _track, _clahe
+    global _cfg, _cam, _model, _imgsz, _running, _track, _clahe, _search_t, _search_yawing
     _cfg = {**DEFAULTS, **config.get("tuning", {}).get("follow", {})}
     _track = None
     _clahe = None
+    _search_t, _search_yawing = 0.0, False
     _ensure_route()
     print("[FOLLOW] starting camera + detector...")
     _cam = DroneCamera(RTSP)
@@ -338,14 +343,27 @@ def _gated(error, gain, deadzone):
     return 0.0 if abs(error) < deadzone else gain * error
 
 
+def _search_yaw_stick():
+    """Stepped search: a short yaw burst, then a pause to settle + look — repeat. A pause
+    between bursts lets the optical-flow hold re-lock (so it spins in PLACE instead of
+    drifting in a circle) and gives a clean, non-blurred frame to detect a person."""
+    global _search_t, _search_yawing
+    now = time.time()
+    phase = _cfg["search_step_s"] if _search_yawing else _cfg["search_hold_s"]
+    if now - _search_t >= phase:
+        _search_yawing = not _search_yawing
+        _search_t = now
+    return _stick(_cfg["search_yaw"], _cfg["max_yaw"]) if _search_yawing else CENTER
+
+
 def controller(state):
     """Steer toward the PREDICTED head position -> (roll, pitch, throttle, yaw)."""
     with _lock:
         tr = _track
 
-    # Lost for too long -> spin slowly in place to search
+    # Lost for too long -> HOVER in place and step-spin to search (no translation at all)
     if tr is None or (time.time() - tr["ts"]) > _cfg["lost_s"]:
-        return CENTER, CENTER, CENTER, _stick(_cfg["search_yaw"], _cfg["max_yaw"])
+        return CENTER, CENTER, CENTER, _search_yaw_stick()
 
     cx, cy, age = _predicted_pos(tr)                    # where the head is NOW (predicted)
     locked = tr["hits"] >= _cfg["lock_hits"]

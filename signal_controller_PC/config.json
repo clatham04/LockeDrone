@@ -28,6 +28,8 @@
       "throttle_gain": 130.0,
       "pitch_gain": 280.0,
       "search_yaw": 28,
+      "search_step_s": 0.45,
+      "search_hold_s": 0.8,
       "yaw_sign": 1,
       "pitch_sign": 1,
       "throttle_sign": 1,
