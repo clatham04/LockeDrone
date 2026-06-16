@@ -19,7 +19,7 @@
       "kp_conf": 0.25,
       "low_light": true,
       "clahe_clip": 2.0,
-      "target_head_y": 0.35,
+      "target_head_y": 0.25,
       "deadzone": 0.06,
       "max_yaw": 45,
       "max_pitch": 65,
@@ -41,15 +41,15 @@
       "lock_hits": 6,
       "fresh_s": 0.4,
       "lost_s": 1.8,
-      "reset_dt_s": 0.35,
+      "reset_dt_s": 0.5,
       "head_width_ft": 0.5,
       "head_width_frac": 0.55,
       "camera_hfov_deg": 30.0,
       "frame_width_px": 640,
-      "target_dist_ft": 11.0,
-      "too_close_ft": 6.0,
+      "target_dist_ft": 15.0,
+      "too_close_ft": 8.0,
       "max_credible_dist_ft": 25.0,
-      "implausible_pitch_frac": 0.6
+      "implausible_pitch_frac": 1.0
     }
   }
 }

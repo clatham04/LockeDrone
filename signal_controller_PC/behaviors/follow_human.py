@@ -83,9 +83,9 @@ DEFAULTS = {
     "camera_hfov_deg": 30.0,
     "frame_width_px": 640,
     "target_dist_ft": 11.0,
-    "too_close_ft": 6.0,
-    "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at partial power)
-    "implausible_pitch_frac": 0.6, # fraction of max_pitch to use when dist reading is implausible
+    "too_close_ft": 5.0,
+    "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at full power)
+    "implausible_pitch_frac": 1.0, # fraction of max_pitch to use when dist reading is implausible
     "head_width_frac": 0.55,      # body-box fallback only
 }
 
@@ -393,9 +393,9 @@ def controller(state):
     elif dist_ft < _cfg["too_close_ft"]:
         pitch_dev = -_cfg["max_pitch"]                  # too close -> full back-off
     elif dist_ft > max_credible:
-        # implausible reading (keypoint noise at range) — drive forward at partial power
-        # rather than max or zero, so we keep closing without flying blind at full speed
-        pitch_dev = _cfg["max_pitch"] * implausible_frac
+        # implausible reading (keypoint noise at range) — already far away and getting farther,
+        # chase at full pitch to close ground
+        pitch_dev = _cfg["max_pitch"]
     else:
         ft_error = dist_ft - _cfg["target_dist_ft"]     # positive -> too far -> move forward
         pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"], 0.5) * _cfg["pitch_sign"]
