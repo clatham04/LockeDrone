@@ -64,10 +64,12 @@ DEFAULTS = {
     "search_yaw": 40,
 
     # --- tracking filter + prediction (alpha-beta) ---
-    "alpha": 0.5,                 # how hard each detection corrects POSITION (0..1)
-    "beta": 0.08,                 # how hard each detection corrects VELOCITY (lower = smoother)
+    "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
+    "beta": 0.05,                 # how hard each detection corrects VELOCITY (lower = smoother)
     "hw_smooth": 0.3,             # head-width EMA (distance) smoothing
-    "predict_cap_s": 0.4,         # never extrapolate position further ahead than this
+    "predict_cap_s": 0.25,        # never extrapolate position further ahead than this
+    "max_vel": 0.6,               # clamp head velocity (frac/s) so prediction CAN'T run away
+    "lock_hits": 6,               # need this many detections in a row before we trust prediction
     "lost_s": 1.2,                # no detection longer than this -> give up + search
     "reset_dt_s": 0.5,            # gap bigger than this -> re-init track (no velocity spike)
 
@@ -155,8 +157,12 @@ def _largest_person(res, fw, fh):
 
 
 def _update_track(track, det):
-    """Alpha-beta filter: fold a new detection into a smoothed position + velocity estimate."""
-    fresh = {"cx": det["cx"], "cy": det["cy"], "vx": 0.0, "vy": 0.0,
+    """Alpha-beta filter: fold a new detection into a smoothed position + velocity estimate.
+
+    'hits' counts consecutive detections; prediction is only trusted once it's high enough
+    (a stable lock), so the velocity garbage from the search spin never steers us.
+    """
+    fresh = {"cx": det["cx"], "cy": det["cy"], "vx": 0.0, "vy": 0.0, "hits": 1,
              "hw": det["head_w_px"], "box": det["box"], "src": det["src"], "ts": det["ts"]}
     if track is None:
         return fresh
@@ -173,16 +179,26 @@ def _update_track(track, det):
         "cy": py + a * ry,
         "vx": track["vx"] + (b / dt) * rx,
         "vy": track["vy"] + (b / dt) * ry,
+        "hits": track["hits"] + 1,
         "hw": track["hw"] * (1 - _cfg["hw_smooth"]) + det["head_w_px"] * _cfg["hw_smooth"],
         "box": det["box"], "src": det["src"], "ts": det["ts"],
     }
 
 
 def _predicted_pos(track):
-    """Where the head is NOW: last filtered position + velocity x (capped) age. (cx, cy, age)."""
+    """Where the head is NOW. Until we have a stable LOCK (lock_hits), don't predict at all —
+    just return the filtered position, so the search-spin's bogus velocity can't steer us.
+    Once locked, extrapolate by the CLAMPED velocity (so it still can't run away). (cx, cy, age)."""
     age = max(time.time() - track["ts"], 0.0)
+    if track["hits"] < _cfg["lock_hits"]:
+        return track["cx"], track["cy"], age            # acquiring -> centre on the raw position
     pdt = min(age, _cfg["predict_cap_s"])
-    return track["cx"] + track["vx"] * pdt, track["cy"] + track["vy"] * pdt, age
+    vmax = _cfg["max_vel"]
+    vx = max(-vmax, min(vmax, track["vx"]))
+    vy = max(-vmax, min(vmax, track["vy"]))
+    cx = min(1.0, max(0.0, track["cx"] + vx * pdt))
+    cy = min(1.0, max(0.0, track["cy"] + vy * pdt))
+    return cx, cy, age
 
 
 def _distance_ft(head_px):
@@ -207,7 +223,8 @@ def _draw_overlay(frame, track):
         return frame
 
     pcx, pcy, age = _predicted_pos(track)
-    predicting = age > 0.15
+    locked = track["hits"] >= _cfg["lock_hits"]
+    predicting = locked and age > 0.15
 
     bx1, by1, bx2, by2 = track["box"]
     cv2.rectangle(frame, (int(bx1 * fw), int(by1 * fh)), (int(bx2 * fw), int(by2 * fh)),
@@ -228,9 +245,9 @@ def _draw_overlay(frame, track):
         cv2.putText(frame, f"dist:{dist_ft:.1f}ft tgt:{_cfg['target_dist_ft']:.1f}ft "
                     f"head:{int(track['hw'])}px [{track['src']}]",
                     (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 2)
-    label = "PREDICTING" if predicting else "TRACKING"
-    cv2.putText(frame, label, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                (0, 200, 255) if predicting else (0, 255, 0), 2)
+    label = "ACQUIRING" if not locked else ("PREDICTING" if predicting else "TRACKING")
+    lcolor = (0, 165, 255) if not locked else ((0, 200, 255) if predicting else (0, 255, 0))
+    cv2.putText(frame, label, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, lcolor, 2)
     return frame
 
 
