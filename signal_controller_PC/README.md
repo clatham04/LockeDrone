@@ -14,6 +14,14 @@ over WiFi. `signals_control.py` connects to the drone, takes off, and runs a fli
 - Python 3.x with dependencies installed: `pip install -r requirements.txt`
 - ffmpeg CLI added to your system PATH — download from https://ffmpeg.org/download.html
 - Run your terminal **as Administrator** (needed for route commands)
+- **Pose model** for `follow_human` (tracks the head): `yolo11m-pose.pt` in the project
+  root (`../yolo11m-pose.pt`). It's gitignored (41 MB), so on a fresh machine fetch it
+  **while you still have internet** (you fly offline on the drone's wifi):
+  ```powershell
+  curl -L -o ..\yolo11m-pose.pt https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m-pose.pt
+  ```
+  Want stronger detection? Set `"model": "yolo11l-pose.pt"` (or `yolo11x-pose.pt`) in
+  `config.json` and download that name instead — your RTX 3080 handles it easily.
 
 ---
 

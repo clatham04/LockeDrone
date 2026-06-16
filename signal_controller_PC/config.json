@@ -13,6 +13,10 @@
     "calibrate_seconds": 1.5,
     "takeoff_pulse_seconds": 0.9,
     "follow": {
+      "model": "yolo11m-pose.pt",
+      "imgsz": 640,
+      "conf": 0.25,
+      "kp_conf": 0.30,
       "edge_margin": 0.0,
       "target_head_y": 0.35,
       "max_yaw": 45,
