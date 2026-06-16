@@ -15,8 +15,10 @@
     "follow": {
       "model": "yolo11m-pose.pt",
       "imgsz": 640,
-      "conf": 0.25,
-      "kp_conf": 0.30,
+      "conf": 0.20,
+      "kp_conf": 0.25,
+      "low_light": true,
+      "clahe_clip": 2.0,
       "target_head_y": 0.35,
       "deadzone": 0.06,
       "max_yaw": 45,

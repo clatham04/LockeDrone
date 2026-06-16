@@ -46,8 +46,10 @@ DEFAULTS = {
     # --- model (pose, for head keypoints) ---
     "model": "yolo11m-pose.pt",
     "imgsz": 640,
-    "conf": 0.25,
-    "kp_conf": 0.30,
+    "conf": 0.20,                 # lower = detects in harder / low-light conditions
+    "kp_conf": 0.25,
+    "low_light": True,            # CLAHE contrast boost so it sees you in a dim room
+    "clahe_clip": 2.0,
 
     # --- control ---
     "target_head_y": 0.35,
@@ -89,6 +91,19 @@ _imgsz = 640
 _running = False
 _lock = threading.Lock()
 _track = None    # filtered head track: {cx, cy, vx, vy, hw, box, src, ts} or None
+_clahe = None    # low-light contrast booster (created lazily)
+
+
+def _enhance(frame):
+    """Brighten/boost contrast for low-light detection (CLAHE on the luminance channel)."""
+    global _clahe
+    if not _cfg.get("low_light", True):
+        return frame
+    if _clahe is None:
+        _clahe = cv2.createCLAHE(clipLimit=_cfg.get("clahe_clip", 2.0), tileGridSize=(8, 8))
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    return cv2.cvtColor(cv2.merge((_clahe.apply(l), a, b)), cv2.COLOR_LAB2BGR)
 
 
 def _ensure_route():
@@ -255,33 +270,41 @@ def _detect_loop():
     global _track
     conf = _cfg["conf"]
     dbg = 0
+    fps, t_prev = 0.0, time.time()
     while _running:
         frame = _cam.read()
         if frame is None:
             time.sleep(0.02)
             continue
         fh, fw = frame.shape[:2]
-        res = _model(frame, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)[0]
+        proc = _enhance(frame)                          # brighten for low-light detection
+        res = _model(proc, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)[0]
         det = _largest_person(res, fw, fh)
         with _lock:
             if det is not None:
                 _track = _update_track(_track, det)     # no detection -> keep predicting the old track
             tr = _track
-        cv2.imshow("Drone Camera", _draw_overlay(frame, tr))
+
+        now = time.time()
+        fps = 0.9 * fps + 0.1 * (1.0 / max(now - t_prev, 1e-3))
+        t_prev = now
+        view = _draw_overlay(proc, tr)                  # show what the MODEL sees (enhanced)
+        cv2.putText(view, f"{fps:4.1f} FPS", (fw - 110, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.imshow("Drone Camera", view)
         cv2.waitKey(1)
+
         dbg += 1
         if dbg % 16 == 0:
-            if tr is not None:
-                print(f"[FOLLOW] head[{tr['src']}] cx:{tr['cx']:.2f} cy:{tr['cy']:.2f} "
-                      f"v:({tr['vx']:+.2f},{tr['vy']:+.2f})/s w:{int(tr['hw'])}px")
-            else:
-                print("[FOLLOW] no person — searching...")
+            state = f"locked hits:{tr['hits']}" if tr else "no person"
+            print(f"[FOLLOW] {fps:.1f} FPS  |  {state}")
 
 
 def start(state, config):
-    global _cfg, _cam, _model, _imgsz, _running, _track
+    global _cfg, _cam, _model, _imgsz, _running, _track, _clahe
     _cfg = {**DEFAULTS, **config.get("tuning", {}).get("follow", {})}
     _track = None
+    _clahe = None
     _ensure_route()
     print("[FOLLOW] starting camera + detector...")
     _cam = DroneCamera(RTSP)
