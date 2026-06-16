@@ -55,10 +55,10 @@ DEFAULTS = {
     "target_head_y": 0.35,
     "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
     "yaw_gain": 90.0,
-    "pitch_gain": 280.0,
+    "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
     "throttle_gain": 130.0,
     "max_yaw": 45,
-    "max_pitch": 50,
+    "max_pitch": 65,              # was 50 — more aggressive for outdoor use
     "max_throttle": 30,
     "yaw_sign": 1,
     "pitch_sign": 1,
@@ -70,13 +70,13 @@ DEFAULTS = {
     # --- tracking filter + prediction (alpha-beta) ---
     "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
     "beta": 0.05,                 # how hard each detection corrects VELOCITY (lower = smoother)
-    "hw_smooth": 0.3,             # head-width EMA (distance) smoothing
+    "hw_smooth": 0.15,            # was 0.3 — more aggressive EMA to reject noisy head-width spikes
     "predict_cap_s": 0.25,        # never extrapolate position further ahead than this
     "max_vel": 0.6,               # clamp head velocity (frac/s) so prediction CAN'T run away
     "lock_hits": 6,               # need this many detections in a row before we trust prediction
     "fresh_s": 0.4,               # only move toward/away if a detection arrived within this (else hold)
-    "lost_s": 1.2,                # no detection longer than this -> give up + search
-    "reset_dt_s": 0.5,            # gap bigger than this -> re-init track (no velocity spike)
+    "lost_s": 1.8,                # was 1.2 — hold track longer before giving up + searching
+    "reset_dt_s": 0.35,           # was 0.5 — tighter gap tolerance to avoid velocity spikes
 
     # --- distance from HEAD width (pinhole camera model) ---
     "head_width_ft": 0.5,
@@ -84,6 +84,8 @@ DEFAULTS = {
     "frame_width_px": 640,
     "target_dist_ft": 11.0,
     "too_close_ft": 6.0,
+    "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at partial power)
+    "implausible_pitch_frac": 0.6, # fraction of max_pitch to use when dist reading is implausible
     "head_width_frac": 0.55,      # body-box fallback only
 }
 
@@ -261,9 +263,12 @@ def _draw_overlay(frame, track):
 
     dist_ft = _distance_ft(track["hw"])
     if dist_ft is not None:
-        c = (0, 255, 0) if abs(dist_ft - _cfg["target_dist_ft"]) < 1.0 else (0, 165, 255)
+        implausible = dist_ft > _cfg.get("max_credible_dist_ft", 25.0)
+        c = (0, 0, 255) if implausible else (
+            (0, 255, 0) if abs(dist_ft - _cfg["target_dist_ft"]) < 1.0 else (0, 165, 255))
+        tag = " [!]" if implausible else ""
         cv2.putText(frame, f"dist:{dist_ft:.1f}ft tgt:{_cfg['target_dist_ft']:.1f}ft "
-                    f"head:{int(track['hw'])}px [{track['src']}]",
+                    f"head:{int(track['hw'])}px [{track['src']}]{tag}",
                     (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 2)
     label = "ACQUIRING" if not locked else ("PREDICTING" if predicting else "TRACKING")
     lcolor = (0, 165, 255) if not locked else ((0, 200, 255) if predicting else (0, 255, 0))
@@ -378,12 +383,19 @@ def controller(state):
     # PITCH (move toward / away): ONLY when locked AND freshly seen. Otherwise HOLD position
     # so it never drives forward while searching or coasting through a detection gap.
     dist_ft = _distance_ft(tr["hw"])
+    max_credible = _cfg.get("max_credible_dist_ft", 25.0)
+    implausible_frac = _cfg.get("implausible_pitch_frac", 0.6)
+
     if not (locked and age < _cfg["fresh_s"]):
         pitch_dev = 0.0                                 # not actively on someone -> stay put
     elif dist_ft is None:
         pitch_dev = 0.0
     elif dist_ft < _cfg["too_close_ft"]:
         pitch_dev = -_cfg["max_pitch"]                  # too close -> full back-off
+    elif dist_ft > max_credible:
+        # implausible reading (keypoint noise at range) — drive forward at partial power
+        # rather than max or zero, so we keep closing without flying blind at full speed
+        pitch_dev = _cfg["max_pitch"] * implausible_frac
     else:
         ft_error = dist_ft - _cfg["target_dist_ft"]     # positive -> too far -> move forward
         pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"], 0.5) * _cfg["pitch_sign"]
@@ -399,6 +411,7 @@ def controller(state):
     if controller._dbg % 25 == 0:
         direction = "FORWARD" if pitch > 128 else "BACKWARD" if pitch < 128 else "HOLD"
         dist_str = f"{dist_ft:.1f}ft" if dist_ft is not None else "?"
-        print(f"[FOLLOW] pitch={pitch} ({direction})  dist={dist_str}  target={_cfg['target_dist_ft']}ft")
+        implausible_tag = " [implausible->partial fwd]" if (dist_ft and dist_ft > max_credible) else ""
+        print(f"[FOLLOW] pitch={pitch} ({direction})  dist={dist_str}  target={_cfg['target_dist_ft']}ft{implausible_tag}")
 
     return roll, pitch, throttle, yaw
