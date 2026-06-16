@@ -1,161 +1,167 @@
-r"""detect_test.py — run YOLO person detection on the drone's FORWARD camera. No flying.
+r"""detect_test.py — see what the drone camera + pose model detect. NO flying.
 
-Pulls the drone's RTSP video (via DroneCamera — an ffmpeg subprocess that survives the
-lossy stream) and runs person detection on it, drawing the boxes.
+Mirrors follow_human's vision: same camera, same pose model, same low-light boost, and the
+same head box + distance reading — it just WATCHES instead of flying. Use it on the ground
+to check FPS, low-light detection, the head/distance numbers, and whether anything is being
+falsely detected (which is what makes the drone drive at "nobody").
 
-- If a DESKTOP is available (you have Remote Desktop) -> shows a LIVE window. Press 'q'
-  to quit. RUN IT FROM A TERMINAL INSIDE THE REMOTE DESKTOP (not plain SSH).
-- If run over plain SSH (no display) -> saves an annotated clip you can copy off.
+It reads the SAME settings from config.json (tuning.follow), so what you see here is what
+follow_human will act on. Run as Administrator (the camera needs the host route).
 
-The route to the drone (192.168.1.1, which collides with your home subnet) is added
-automatically — run as Administrator. Needs the ffmpeg CLI.
-
-    python detect_test.py [seconds]      # seconds only matters in save mode (default 20)
+    python detect_test.py            # press 'q' to quit
 """
+import json
+import math
 import os
 import subprocess
-import sys
 import time
 
 import cv2
-import yaml
+import torch
 from ultralytics import YOLO
 
 from drone_camera import DroneCamera
 
 RTSP = "rtsp://192.168.1.1:7070/webcam"
-CONF = 0.35
 PERSON_CLASS = 0
-DETECT_EVERY = 2           # run YOLO every Nth frame — frees CPU so the decoder isn't starved
-OUT_VIDEO = "detect_out.mp4"
-OUT_SNAP = "detect_snapshot.jpg"
+NOSE, L_EYE, R_EYE, L_EAR, R_EAR = 0, 1, 2, 3, 4
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)                 # LockeDrone/
-LIVE = True  # Windows always has a display; set to False if you want to save a clip instead
+ROOT = os.path.dirname(HERE)
 
+# Pull the SAME tuning follow_human uses, so this shows exactly what it'll act on.
+with open(os.path.join(HERE, "config.json")) as f:
+    CFG = json.load(f).get("tuning", {}).get("follow", {})
 
-def load_model():
-    """Load the model, preferring the fast ncnn export. Returns (model, imgsz).
+MODEL = CFG.get("model", "yolo11m-pose.pt")
+IMGSZ = CFG.get("imgsz", 640)
+CONF = CFG.get("conf", 0.20)
+KP_CONF = CFG.get("kp_conf", 0.25)
+LOW_LIGHT = CFG.get("low_light", True)
+HEAD_WIDTH_FT = CFG.get("head_width_ft", 0.5)
+HFOV = CFG.get("camera_hfov_deg", 30.0)
+FRAME_W = CFG.get("frame_width_px", 640)
+TARGET_FT = CFG.get("target_dist_ft", 11.0)
 
-    ncnn is much faster than the .pt on the Pi's ARM CPU, but it's FIXED-size: we read
-    the resolution baked into the export (metadata.yaml) and run at exactly that, or
-    ncnn throws 'malloc(): invalid size'. (Re-bake smaller for more speed via the
-    "Human Detection/export_model.py".)
-    """
-    ncnn = os.path.join(ROOT, "yolo11n_ncnn_model")
-    meta_path = os.path.join(ncnn, "metadata.yaml")
-    if os.path.isfile(meta_path):               # the folder must actually contain the model
-        size = yaml.safe_load(open(meta_path)).get("imgsz", 640)
-        imgsz = size[0] if isinstance(size, (list, tuple)) else size
-        print(f"[DET] ncnn model @ {imgsz}px (fast on ARM)")
-        return YOLO(ncnn, task="detect"), imgsz
-    print("[DET] ncnn model missing/incomplete — using yolo11n.pt (slower).")
-    return YOLO(os.path.join(ROOT, "yolo11n.pt")), 192   # small input so the .pt isn't unbearable
+_clahe = cv2.createCLAHE(clipLimit=CFG.get("clahe_clip", 2.0), tileGridSize=(8, 8))
 
 
 def ensure_route_and_reachable():
-    """Force the drone's IP out the correct interface and confirm it answers."""
-    # Add a host route to the drone (Windows equivalent of 'ip route add ... dev wlan0')
-    subprocess.run(
-        ["route", "add", "192.168.1.1", "mask", "255.255.255.255", "192.168.1.1"],
-        capture_output=True
-    )  # ignore errors — "Element exists" is fine
-
-    # Windows ping: -n 1 (1 packet), -w 2000 (2s timeout)
-    r = subprocess.run(
-        ["ping", "-n", "1", "-w", "2000", "192.168.1.1"],
-        capture_output=True
-    )
+    subprocess.run(["route", "add", "192.168.1.1", "mask", "255.255.255.255", "192.168.1.1"],
+                   capture_output=True)
+    r = subprocess.run(["ping", "-n", "1", "-w", "2000", "192.168.1.1"], capture_output=True)
     return r.returncode == 0
 
 
-def annotate(frame, boxes):
-    n = 0
-    for box in boxes:
-        x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
-        c = float(box.conf[0])
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, f"person {c:.2f}", (x1, max(y1 - 8, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        n += 1
-    cv2.putText(frame, f"people: {n}", (8, 24),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-    return n
+def enhance(frame):
+    if not LOW_LIGHT:
+        return frame
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    return cv2.cvtColor(cv2.merge((_clahe.apply(l), a, b)), cv2.COLOR_LAB2BGR)
+
+
+def head_metrics(kp):
+    """From one person's keypoints -> (cx, cy, head_width_px) or None."""
+    pts = {}
+    for idx in (NOSE, L_EYE, R_EYE, L_EAR, R_EAR):
+        x, y, c = kp[idx]
+        if c >= KP_CONF:
+            pts[idx] = (float(x), float(y))
+    if len(pts) < 2:
+        return None
+    xs = [p[0] for p in pts.values()]
+    ys = [p[1] for p in pts.values()]
+    cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+    if L_EAR in pts and R_EAR in pts:
+        hw = math.hypot(pts[L_EAR][0] - pts[R_EAR][0], pts[L_EAR][1] - pts[R_EAR][1])
+    elif L_EYE in pts and R_EYE in pts:
+        hw = math.hypot(pts[L_EYE][0] - pts[R_EYE][0], pts[L_EYE][1] - pts[R_EYE][1]) * 2.2
+    else:
+        hw = max(max(xs) - min(xs), 1.0)
+    return cx, cy, max(hw, 1.0)
+
+
+def distance_ft(head_px):
+    if not head_px or head_px <= 0:
+        return None
+    focal = (FRAME_W / 2) / math.tan(math.radians(HFOV) / 2)
+    return (HEAD_WIDTH_FT * focal) / head_px
 
 
 def main():
-    seconds = int(sys.argv[1]) if len(sys.argv) > 1 else 20
-    model, imgsz = load_model()
+    dev = "GPU (CUDA)" if torch.cuda.is_available() else "CPU"
+    path = os.path.join(ROOT, MODEL)
+    path = path if os.path.isfile(path) else MODEL
+    print(f"[DET] model: {os.path.basename(path)} on {dev}  (conf={CONF}, low_light={LOW_LIGHT})")
+    model = YOLO(path)
 
-    print("[DET] setting drone route + checking reachability...")
+    print("[DET] route + reachability...")
     if not ensure_route_and_reachable():
-        print("[DET] can't reach the drone at 192.168.1.1.")
-        print("      Check: drone ON?  connected to FLOW-UFO wifi?  phone disconnected?")
-        print("      Also make sure you're running as Administrator.")
+        print("[DET] can't reach the drone. On FLOW-UFO? drone ON? phone off? running as Admin?")
         return
 
-    print(f"[DET] opening {RTSP} (ffmpeg subprocess — survives the lossy stream) ...")
-    cam = DroneCamera(RTSP, debug=True)            # uses default 640x352, shows ffmpeg errors
-
-    writer = None
-    if LIVE:
-        print(f"[DET] LIVE window ({cam.w}x{cam.h}) — press 'q' to quit.")
-    else:
-        writer = cv2.VideoWriter(OUT_VIDEO, cv2.VideoWriter_fourcc(*"mp4v"), 15, (cam.w, cam.h))
-        print(f"[DET] no display — saving {seconds}s to {OUT_VIDEO} (set LIVE=True for a live window).")
-
-    # wait for the first frame (ffmpeg connect + first decode can take a couple seconds)
+    print(f"[DET] opening {RTSP} ...")
+    cam = DroneCamera(RTSP, debug=True)
     print("[DET] waiting for first frame...")
-    t_wait = time.time()
+    t = time.time()
     while cam.read() is None:
-        if time.time() - t_wait > 15:
-            print("[DET] no video after 15s — is the drone streaming? (check it's ON + on FLOW-UFO)")
+        if time.time() - t > 15:
+            print("[DET] no video after 15s — drone ON + streaming?")
             cam.stop()
             return
         time.sleep(0.1)
 
-    t0 = time.time()
-    frames = 0
-    last = None
-    last_boxes = []
+    print("[DET] LIVE — press 'q' to quit.")
+    fps, t_prev = 0.0, time.time()
     try:
         while True:
             frame = cam.read()
             if frame is None:
                 time.sleep(0.01)
                 continue
-            frames += 1
-            # only run YOLO every Nth frame; reuse the last boxes in between (saves CPU)
-            if frames % DETECT_EVERY == 0:
-                results = model(frame, conf=CONF, classes=[PERSON_CLASS], imgsz=imgsz, verbose=False)
-                last_boxes = results[0].boxes
-            annotate(frame, last_boxes)
-            last = frame
+            fh, fw = frame.shape[:2]
+            proc = enhance(frame)
+            res = model(proc, conf=CONF, classes=[PERSON_CLASS], imgsz=IMGSZ, verbose=False)[0]
 
-            if LIVE:
-                cv2.imshow("Drone Detection (press q to quit)", frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-            else:
-                writer.write(frame)
-                if frames % 15 == 0:
-                    print(f"  ...{frames} frames")
-                if time.time() - t0 >= seconds:
-                    break
+            # every detection (dim box) so false positives are visible; head on the largest
+            boxes = res.boxes.xyxy.cpu().numpy() if (res.boxes is not None and res.boxes.xyxy is not None) else []
+            n = len(boxes)
+            big_i, big_a = -1, 0.0
+            for i, (x1, y1, x2, y2) in enumerate(boxes):
+                area = (x2 - x1) * (y2 - y1)
+                if area > big_a:
+                    big_a, big_i = area, i
+                cv2.rectangle(proc, (int(x1), int(y1)), (int(x2), int(y2)), (0, 150, 0), 1)
+
+            if big_i >= 0 and res.keypoints is not None and res.keypoints.data is not None:
+                head = head_metrics(res.keypoints.data[big_i].cpu().numpy())
+                if head:
+                    hx, hy, hw = head
+                    cv2.rectangle(proc, (int(hx - hw / 2), int(hy - hw / 2)),
+                                  (int(hx + hw / 2), int(hy + hw * 0.7)), (0, 0, 255), 2)
+                    cv2.circle(proc, (int(hx), int(hy)), 3, (0, 0, 255), -1)
+                    d = distance_ft(hw)
+                    if d is not None:
+                        cv2.putText(proc, f"dist:{d:.1f}ft (target {TARGET_FT:.0f}ft)  head:{int(hw)}px",
+                                    (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+            now = time.time()
+            fps = 0.9 * fps + 0.1 * (1.0 / max(now - t_prev, 1e-3))
+            t_prev = now
+            cv2.putText(proc, f"people:{n}   {fps:4.1f} FPS   {dev}", (8, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.imshow("Detect Test (q to quit)", proc)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
     except KeyboardInterrupt:
-        print("\n[DET] stopped.")
+        pass
     finally:
         cam.stop()
-        if writer:
-            writer.release()
         cv2.destroyAllWindows()
-
-    fps = frames / (time.time() - t0) if frames else 0
-    if last is not None:
-        cv2.imwrite(OUT_SNAP, last)
-    print(f"[DET] {frames} frames, ~{fps:.1f} FPS. Saved {OUT_SNAP}"
-          + ("" if LIVE else f" and {OUT_VIDEO}") + ".")
+        for _ in range(5):
+            cv2.waitKey(1)
+    print("[DET] done.")
 
 
 if __name__ == "__main__":

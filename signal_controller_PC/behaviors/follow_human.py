@@ -72,6 +72,7 @@ DEFAULTS = {
     "predict_cap_s": 0.25,        # never extrapolate position further ahead than this
     "max_vel": 0.6,               # clamp head velocity (frac/s) so prediction CAN'T run away
     "lock_hits": 6,               # need this many detections in a row before we trust prediction
+    "fresh_s": 0.4,               # only move toward/away if a detection arrived within this (else hold)
     "lost_s": 1.2,                # no detection longer than this -> give up + search
     "reset_dt_s": 0.5,            # gap bigger than this -> re-init track (no velocity spike)
 
@@ -346,24 +347,28 @@ def controller(state):
     if tr is None or (time.time() - tr["ts"]) > _cfg["lost_s"]:
         return CENTER, CENTER, CENTER, _stick(_cfg["search_yaw"], _cfg["max_yaw"])
 
-    cx, cy, _age = _predicted_pos(tr)                   # where the head is NOW (predicted)
+    cx, cy, age = _predicted_pos(tr)                    # where the head is NOW (predicted)
+    locked = tr["hits"] >= _cfg["lock_hits"]
     dz = _cfg["deadzone"]
 
     # YAW: center the (predicted) head left/right
     yaw_dev = _gated(cx - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
 
-    # PITCH: hold follow distance (feet, from head width) — works even up close
+    # THROTTLE: keep the (predicted) head at the target height
+    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
+
+    # PITCH (move toward / away): ONLY when locked AND freshly seen. Otherwise HOLD position
+    # so it never drives forward while searching or coasting through a detection gap.
     dist_ft = _distance_ft(tr["hw"])
-    if dist_ft is None:
+    if not (locked and age < _cfg["fresh_s"]):
+        pitch_dev = 0.0                                 # not actively on someone -> stay put
+    elif dist_ft is None:
         pitch_dev = 0.0
     elif dist_ft < _cfg["too_close_ft"]:
         pitch_dev = -_cfg["max_pitch"]                  # too close -> full back-off
     else:
         ft_error = dist_ft - _cfg["target_dist_ft"]     # positive -> too far -> move forward
         pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"], 0.5) * _cfg["pitch_sign"]
-
-    # THROTTLE: keep the (predicted) head at the target height
-    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
 
     roll = CENTER
     pitch = _stick(pitch_dev, _cfg["max_pitch"])

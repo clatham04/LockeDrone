@@ -36,6 +36,7 @@
       "predict_cap_s": 0.25,
       "max_vel": 0.6,
       "lock_hits": 6,
+      "fresh_s": 0.4,
       "lost_s": 1.2,
       "head_width_ft": 0.5,
       "head_width_frac": 0.55,
