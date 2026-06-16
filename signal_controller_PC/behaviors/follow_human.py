@@ -1,18 +1,23 @@
-r"""follow_human — the drone follows a person, tracking the HEAD (pose keypoints).
+r"""follow_human — the drone follows a person, tracking the HEAD with prediction.
 
 Searches by spinning slowly until a person is found, then tracks them:
   - YAW:      keeps the head centered left/right
   - PITCH:    holds a follow distance, judged from the HEAD's apparent width
   - THROTTLE: keeps the head at a target height in the frame (target_head_y)
 
-Why the head (not the body): up close the body box gets cut off by the frame, so any
-body-based distance estimate breaks and the drone stops following. The head stays small
-and fully in view much longer, so tracking head SIZE + head HEIGHT lets it keep following
-even when you're close. We get the head from a POSE model's face keypoints
-(nose/eyes/ears) — completely independent of the body box.
+Why the head (not the body): up close the body box gets cut off, so any body-based
+distance estimate breaks. We get the head from a POSE model's face keypoints
+(nose/eyes/ears), independent of the body box.
 
-Distance: the head's real width (~ear-to-ear, ~0.5 ft) is roughly constant, so we convert
-its pixel width to feet with the pinhole camera model. Detection is exponentially smoothed.
+STABILITY + PREDICTION (the important part):
+The control loop runs at 25 Hz but detections arrive slower and are noisy. If we steered
+straight off each raw detection, the drone would jitter (chasing noise) and fall behind a
+moving person (steering toward a stale position). Instead we run an ALPHA-BETA filter: it
+smooths the head position AND estimates its velocity. Between detections — and while you
+move — the controller PREDICTS where your head is now (position + velocity x time), so it
+stays locked on through motion and brief detection dropouts instead of losing you.
+
+Distance: head real width (~0.5 ft, ear-to-ear) -> feet via the pinhole camera model.
 """
 import math
 import os
@@ -30,7 +35,6 @@ from drone_camera import DroneCamera
 RTSP = "rtsp://192.168.1.1:7070/webcam"
 PERSON_CLASS = 0
 CENTER = 128
-SMOOTH = 0.4   # exponential smoothing factor (0=no update, 1=no smoothing)
 
 # COCO pose keypoint indices for the head
 NOSE, L_EYE, R_EYE, L_EAR, R_EAR = 0, 1, 2, 3, 4
@@ -40,35 +44,40 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 
 DEFAULTS = {
     # --- model (pose, for head keypoints) ---
-    "model": "yolo11m-pose.pt",   # downloaded to the project root; PC GPU runs it easily
+    "model": "yolo11m-pose.pt",
     "imgsz": 640,
-    "conf": 0.25,                 # person confidence
-    "kp_conf": 0.30,              # min keypoint confidence to trust a head point
+    "conf": 0.25,
+    "kp_conf": 0.30,
 
     # --- control ---
     "target_head_y": 0.35,
-    "deadzone": 0.05,
-    "yaw_gain": 110.0,
+    "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
+    "yaw_gain": 90.0,
     "pitch_gain": 280.0,
-    "throttle_gain": 160.0,
+    "throttle_gain": 130.0,
     "max_yaw": 45,
     "max_pitch": 50,
     "max_throttle": 30,
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
-    "stale_s": 0.8,
     "search_yaw": 40,
 
+    # --- tracking filter + prediction (alpha-beta) ---
+    "alpha": 0.5,                 # how hard each detection corrects POSITION (0..1)
+    "beta": 0.08,                 # how hard each detection corrects VELOCITY (lower = smoother)
+    "hw_smooth": 0.3,             # head-width EMA (distance) smoothing
+    "predict_cap_s": 0.4,         # never extrapolate position further ahead than this
+    "lost_s": 1.2,                # no detection longer than this -> give up + search
+    "reset_dt_s": 0.5,            # gap bigger than this -> re-init track (no velocity spike)
+
     # --- distance from HEAD width (pinhole camera model) ---
-    # Adult head is ~0.5 ft (ear to ear) and stays roughly constant from any angle.
-    # focal_px = (frame_width_px/2)/tan(hfov/2);  distance_ft = head_width_ft*focal_px/head_px
     "head_width_ft": 0.5,
     "camera_hfov_deg": 30.0,
     "frame_width_px": 640,
     "target_dist_ft": 11.0,
     "too_close_ft": 6.0,
-    "head_width_frac": 0.55,      # ONLY for the body-box fallback when the head isn't visible
+    "head_width_frac": 0.55,      # body-box fallback only
 }
 
 _cfg = dict(DEFAULTS)
@@ -77,7 +86,7 @@ _model = None
 _imgsz = 640
 _running = False
 _lock = threading.Lock()
-_smoothed = None    # exponentially smoothed detection (or None)
+_track = None    # filtered head track: {cx, cy, vx, vy, hw, box, src, ts} or None
 
 
 def _ensure_route():
@@ -89,8 +98,7 @@ def _ensure_route():
 
 
 def _load_model():
-    """Load the pose model. Prefer a local file in the project root so it works OFFLINE
-    on the drone's wifi (ultralytics would otherwise try to download it)."""
+    """Load the pose model. Prefer a local file so it works OFFLINE on the drone's wifi."""
     name = _cfg.get("model", "yolo11m-pose.pt")
     local = os.path.join(ROOT, name)
     path = local if os.path.isfile(local) else name
@@ -102,7 +110,7 @@ def _load_model():
 
 
 def _head_from_person(res, i, x1, y1, x2, y2, fw, fh):
-    """Build head metrics for person i: prefer pose keypoints, fall back to the body box."""
+    """Build raw head metrics for person i: prefer pose keypoints, fall back to the body box."""
     kp = None
     if res.keypoints is not None and res.keypoints.data is not None and len(res.keypoints.data) > i:
         kp = res.keypoints.data[i].cpu().numpy()        # (17, 3): x, y, conf
@@ -118,14 +126,14 @@ def _head_from_person(res, i, x1, y1, x2, y2, fw, fh):
         xs = [p[0] for p in pts.values()]
         ys = [p[1] for p in pts.values()]
         cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
-        if L_EAR in pts and R_EAR in pts:               # best: real head width
+        if L_EAR in pts and R_EAR in pts:
             hw = math.hypot(pts[L_EAR][0] - pts[R_EAR][0], pts[L_EAR][1] - pts[R_EAR][1])
-        elif L_EYE in pts and R_EYE in pts:             # eyes span ~0.45 of head width
+        elif L_EYE in pts and R_EYE in pts:
             hw = math.hypot(pts[L_EYE][0] - pts[R_EYE][0], pts[L_EYE][1] - pts[R_EYE][1]) * 2.2
         else:
             hw = max(max(xs) - min(xs), 1.0)
         src = "head"
-    else:                                               # no trustworthy head points
+    else:
         cx, cy = (x1 + x2) / 2, y1 + (y2 - y1) * 0.10
         hw = (x2 - x1) * _cfg["head_width_frac"]
         src = "body"
@@ -135,7 +143,7 @@ def _head_from_person(res, i, x1, y1, x2, y2, fw, fh):
 
 
 def _largest_person(res, fw, fh):
-    """Largest detected person -> head metrics, or None."""
+    """Largest detected person -> raw head metrics, or None."""
     boxes = res.boxes
     if boxes is None or boxes.xyxy is None or len(boxes) == 0:
         return None
@@ -146,24 +154,39 @@ def _largest_person(res, fw, fh):
     return _head_from_person(res, i, x1, y1, x2, y2, fw, fh)
 
 
-def _smooth(prev, det):
-    """Exponentially smooth the head values to reduce jitter."""
-    if prev is None:
-        return det
-    a = SMOOTH
+def _update_track(track, det):
+    """Alpha-beta filter: fold a new detection into a smoothed position + velocity estimate."""
+    fresh = {"cx": det["cx"], "cy": det["cy"], "vx": 0.0, "vy": 0.0,
+             "hw": det["head_w_px"], "box": det["box"], "src": det["src"], "ts": det["ts"]}
+    if track is None:
+        return fresh
+    dt = det["ts"] - track["ts"]
+    if dt <= 0 or dt > _cfg["reset_dt_s"]:
+        return fresh                                    # long gap -> restart, no velocity spike
+
+    a, b = _cfg["alpha"], _cfg["beta"]
+    # predict from the old state, then correct toward the measurement
+    px, py = track["cx"] + track["vx"] * dt, track["cy"] + track["vy"] * dt
+    rx, ry = det["cx"] - px, det["cy"] - py
     return {
-        "cx": prev["cx"] * (1 - a) + det["cx"] * a,
-        "cy": prev["cy"] * (1 - a) + det["cy"] * a,
-        "head_w_px": prev["head_w_px"] * (1 - a) + det["head_w_px"] * a,
-        "box": det["box"],
-        "src": det["src"],
-        "ts": det["ts"],
+        "cx": px + a * rx,
+        "cy": py + a * ry,
+        "vx": track["vx"] + (b / dt) * rx,
+        "vy": track["vy"] + (b / dt) * ry,
+        "hw": track["hw"] * (1 - _cfg["hw_smooth"]) + det["head_w_px"] * _cfg["hw_smooth"],
+        "box": det["box"], "src": det["src"], "ts": det["ts"],
     }
 
 
-def _estimate_distance_ft(det):
+def _predicted_pos(track):
+    """Where the head is NOW: last filtered position + velocity x (capped) age. (cx, cy, age)."""
+    age = max(time.time() - track["ts"], 0.0)
+    pdt = min(age, _cfg["predict_cap_s"])
+    return track["cx"] + track["vx"] * pdt, track["cy"] + track["vy"] * pdt, age
+
+
+def _distance_ft(head_px):
     """Distance in feet from the head's pixel width (pinhole camera model)."""
-    head_px = det.get("head_w_px", 0)
     if head_px <= 0:
         return None
     hfov_rad = math.radians(_cfg["camera_hfov_deg"])
@@ -171,11 +194,11 @@ def _estimate_distance_ft(det):
     return (_cfg["head_width_ft"] * focal_px) / head_px
 
 
-def _draw_overlay(frame, det):
-    """Draw the tracking overlay (body box, head box, target line, distance) onto frame."""
+def _draw_overlay(frame, track):
+    """Draw the tracking overlay (head box at the predicted position, target line, distance)."""
     fh, fw = frame.shape[:2]
 
-    if det is None:
+    if track is None:
         cx, cy = fw // 2, fh // 2
         cv2.line(frame, (cx - 30, cy), (cx + 30, cy), (0, 165, 255), 2)
         cv2.line(frame, (cx, cy - 30), (cx, cy + 30), (0, 165, 255), 2)
@@ -183,33 +206,36 @@ def _draw_overlay(frame, det):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
         return frame
 
-    bx1, by1, bx2, by2 = det["box"]
+    pcx, pcy, age = _predicted_pos(track)
+    predicting = age > 0.15
+
+    bx1, by1, bx2, by2 = track["box"]
     cv2.rectangle(frame, (int(bx1 * fw), int(by1 * fh)), (int(bx2 * fw), int(by2 * fh)),
-                  (0, 150, 0), 1)                       # body box (dim — not what we track)
+                  (0, 150, 0), 1)                       # body box (dim)
 
-    # head box (what we actually track), sized by head_w_px, centered on the head
-    hx, hy = int(det["cx"] * fw), int(det["cy"] * fh)
-    hw = int(det["head_w_px"])
-    cv2.rectangle(frame, (hx - hw // 2, hy - hw // 2), (hx + hw // 2, hy + int(hw * 0.7)),
-                  (0, 0, 255), 2)
-    cv2.circle(frame, (hx, hy), 3, (0, 0, 255), -1)
+    hx, hy = int(pcx * fw), int(pcy * fh)               # predicted head position
+    hw = int(track["hw"])
+    color = (0, 200, 255) if predicting else (0, 0, 255)
+    cv2.rectangle(frame, (hx - hw // 2, hy - hw // 2), (hx + hw // 2, hy + int(hw * 0.7)), color, 2)
+    cv2.circle(frame, (hx, hy), 3, color, -1)
 
-    ty = int(_cfg["target_head_y"] * fh)                # target head-height line
+    ty = int(_cfg["target_head_y"] * fh)
     cv2.line(frame, (0, ty), (fw, ty), (0, 255, 255), 1)
 
-    dist_ft = _estimate_distance_ft(det)
-    target_ft = _cfg["target_dist_ft"]
+    dist_ft = _distance_ft(track["hw"])
     if dist_ft is not None:
-        color = (0, 255, 0) if abs(dist_ft - target_ft) < 1.0 else (0, 165, 255)
-        cv2.putText(frame, f"dist:{dist_ft:.1f}ft target:{target_ft:.1f}ft "
-                    f"head:{int(det['head_w_px'])}px [{det['src']}]",
-                    (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-    cv2.putText(frame, "TRACKING", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        c = (0, 255, 0) if abs(dist_ft - _cfg["target_dist_ft"]) < 1.0 else (0, 165, 255)
+        cv2.putText(frame, f"dist:{dist_ft:.1f}ft tgt:{_cfg['target_dist_ft']:.1f}ft "
+                    f"head:{int(track['hw'])}px [{track['src']}]",
+                    (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 2)
+    label = "PREDICTING" if predicting else "TRACKING"
+    cv2.putText(frame, label, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                (0, 200, 255) if predicting else (0, 255, 0), 2)
     return frame
 
 
 def _detect_loop():
-    global _smoothed
+    global _track
     conf = _cfg["conf"]
     dbg = 0
     while _running:
@@ -221,23 +247,24 @@ def _detect_loop():
         res = _model(frame, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)[0]
         det = _largest_person(res, fw, fh)
         with _lock:
-            _smoothed = _smooth(_smoothed, det) if det else None
-            s = _smoothed
-        cv2.imshow("Drone Camera", _draw_overlay(frame, s))
+            if det is not None:
+                _track = _update_track(_track, det)     # no detection -> keep predicting the old track
+            tr = _track
+        cv2.imshow("Drone Camera", _draw_overlay(frame, tr))
         cv2.waitKey(1)
         dbg += 1
         if dbg % 16 == 0:
-            if s:
-                print(f"[FOLLOW] head[{s['src']}] cx:{s['cx']:.2f} cy:{s['cy']:.2f} "
-                      f"w:{int(s['head_w_px'])}px")
+            if tr is not None:
+                print(f"[FOLLOW] head[{tr['src']}] cx:{tr['cx']:.2f} cy:{tr['cy']:.2f} "
+                      f"v:({tr['vx']:+.2f},{tr['vy']:+.2f})/s w:{int(tr['hw'])}px")
             else:
                 print("[FOLLOW] no person — searching...")
 
 
 def start(state, config):
-    global _cfg, _cam, _model, _imgsz, _running, _smoothed
+    global _cfg, _cam, _model, _imgsz, _running, _track
     _cfg = {**DEFAULTS, **config.get("tuning", {}).get("follow", {})}
-    _smoothed = None
+    _track = None
     _ensure_route()
     print("[FOLLOW] starting camera + detector...")
     _cam = DroneCamera(RTSP)
@@ -271,21 +298,22 @@ def _gated(error, gain, deadzone):
 
 
 def controller(state):
-    """Read the latest smoothed head detection and return (roll, pitch, throttle, yaw)."""
+    """Steer toward the PREDICTED head position -> (roll, pitch, throttle, yaw)."""
     with _lock:
-        det = _smoothed
+        tr = _track
 
-    # Lost: spin slowly in place to search
-    if det is None or (time.time() - det["ts"]) > _cfg["stale_s"]:
+    # Lost for too long -> spin slowly in place to search
+    if tr is None or (time.time() - tr["ts"]) > _cfg["lost_s"]:
         return CENTER, CENTER, CENTER, _stick(_cfg["search_yaw"], _cfg["max_yaw"])
 
+    cx, cy, _age = _predicted_pos(tr)                   # where the head is NOW (predicted)
     dz = _cfg["deadzone"]
 
-    # YAW: center the head left/right
-    yaw_dev = _gated(det["cx"] - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
+    # YAW: center the (predicted) head left/right
+    yaw_dev = _gated(cx - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
 
-    # PITCH: hold follow distance (feet, from head width) — works even when close
-    dist_ft = _estimate_distance_ft(det)
+    # PITCH: hold follow distance (feet, from head width) — works even up close
+    dist_ft = _distance_ft(tr["hw"])
     if dist_ft is None:
         pitch_dev = 0.0
     elif dist_ft < _cfg["too_close_ft"]:
@@ -294,8 +322,8 @@ def controller(state):
         ft_error = dist_ft - _cfg["target_dist_ft"]     # positive -> too far -> move forward
         pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"], 0.5) * _cfg["pitch_sign"]
 
-    # THROTTLE: keep the head at the target height
-    thr_dev = -_gated(det["cy"] - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
+    # THROTTLE: keep the (predicted) head at the target height
+    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
 
     roll = CENTER
     pitch = _stick(pitch_dev, _cfg["max_pitch"])
