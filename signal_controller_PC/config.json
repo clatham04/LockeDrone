@@ -44,6 +44,7 @@
       "reset_dt_s": 0.5,
       "head_width_ft": 0.5,
       "head_width_frac": 0.55,
+      "min_head_px": 8,
       "camera_hfov_deg": 30.0,
       "frame_width_px": 640,
       "target_dist_ft": 15.0,

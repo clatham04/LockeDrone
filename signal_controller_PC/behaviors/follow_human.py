@@ -87,6 +87,7 @@ DEFAULTS = {
     "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at full power)
     "implausible_pitch_frac": 1.0, # fraction of max_pitch to use when dist reading is implausible
     "head_width_frac": 0.55,      # body-box fallback only
+    "min_head_px": 8,             # reject detections where head is smaller than this (too far / noise)
 }
 
 _cfg = dict(DEFAULTS)
@@ -175,7 +176,11 @@ def _largest_person(res, fw, fh):
     areas = (xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])
     i = int(areas.argmax())
     x1, y1, x2, y2 = (float(v) for v in xyxy[i])
-    return _head_from_person(res, i, x1, y1, x2, y2, fw, fh)
+    det = _head_from_person(res, i, x1, y1, x2, y2, fw, fh)
+    # reject if head is too small — either too far away or a false positive
+    if det["head_w_px"] < _cfg.get("min_head_px", 8):
+        return None
+    return det
 
 
 def _update_track(track, det):
