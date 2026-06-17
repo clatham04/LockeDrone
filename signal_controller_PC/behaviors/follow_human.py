@@ -50,19 +50,19 @@ DEFAULTS = {
     "conf": 0.20,                 # lower = detects in harder / low-light conditions
     "kp_conf": 0.25,              # min keypoint conf to USE a point for the head
     "person_kp_conf": 0.5,        # keypoints this confident count toward "is it a real human"
-    "min_kp": 6,                  # need this many strong keypoints, or it's rejected (statue filter)
+    "min_kp": 8,                  # need this many strong keypoints, or it's rejected (statue filter)
     "low_light": True,            # CLAHE contrast boost so it sees you in a dim room
     "clahe_clip": 2.0,
 
     # --- control ---
-    "target_head_y": 0.35,
+    "target_head_y": 0.45,        # head near frame center -> drone rises to HEAD height
     "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
-    "yaw_gain": 90.0,
+    "yaw_gain": 120.0,            # turn faster to keep you centered (helps locking)
     "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
-    "throttle_gain": 130.0,
-    "max_yaw": 45,
+    "throttle_gain": 150.0,
+    "max_yaw": 60,                # turn faster so you don't drift out before it centers
     "max_pitch": 65,              # was 50 — more aggressive for outdoor use
-    "max_throttle": 30,
+    "max_throttle": 40,           # more climb authority to reach head height
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
@@ -179,8 +179,10 @@ def _person_head(res, i, fw, fh):
     return {"cx": cx / fw, "cy": cy / fh, "head_w_px": hw, "src": src, "ts": time.time()}
 
 
-def _largest_person(res, fw, fh):
-    """Largest REAL person (passes the human-skeleton filter) -> head metrics, or None."""
+def _largest_person(res, fw, fh, prefer=None):
+    """Best REAL person -> head metrics, or None. With a current track (prefer=(cx,cy)) it
+    STICKS to the person nearest that point instead of hopping to another box each frame
+    (stops it flipping between you and a statue/second person)."""
     boxes = res.boxes
     if boxes is None or boxes.xyxy is None or len(boxes) == 0:
         return None
@@ -188,13 +190,18 @@ def _largest_person(res, fw, fh):
     order = sorted(range(len(xyxy)),
                    key=lambda i: (xyxy[i, 2] - xyxy[i, 0]) * (xyxy[i, 3] - xyxy[i, 1]),
                    reverse=True)
-    for i in order:                                           # largest first; first valid one wins
+    cands = []
+    for i in order:                                           # largest first
         head = _person_head(res, i, fw, fh)
         if head is not None:
             x1, y1, x2, y2 = xyxy[i]
             head["box"] = (x1 / fw, y1 / fh, x2 / fw, y2 / fh)
-            return head
-    return None
+            cands.append(head)
+    if not cands:
+        return None
+    if prefer is not None:                                    # already locked -> stay on this target
+        return min(cands, key=lambda h: (h["cx"] - prefer[0]) ** 2 + (h["cy"] - prefer[1]) ** 2)
+    return cands[0]                                           # no track yet -> largest valid person
 
 
 def _update_track(track, det):
@@ -308,7 +315,9 @@ def _detect_loop():
         fh, fw = frame.shape[:2]
         proc = _enhance(frame)                          # brighten for low-light detection
         res = _model(proc, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)[0]
-        det = _largest_person(res, fw, fh)
+        with _lock:
+            prefer = (_track["cx"], _track["cy"]) if _track is not None else None
+        det = _largest_person(res, fw, fh, prefer)      # stick to the current target if we have one
         with _lock:
             if det is not None:
                 _track = _update_track(_track, det)     # no detection -> keep predicting the old track
