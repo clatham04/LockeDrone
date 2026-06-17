@@ -49,8 +49,8 @@ DEFAULTS = {
     "imgsz": 640,
     "conf": 0.20,                 # lower = detects in harder / low-light conditions
     "kp_conf": 0.25,              # min keypoint conf to USE a point for the head
-    "person_kp_conf": 0.5,        # keypoints this confident count toward "is it a real human"
-    "min_kp": 8,                  # need this many strong keypoints, or it's rejected (statue filter)
+    "person_kp_conf": 0.4,        # keypoints this confident count toward "is it a real human"
+    "min_kp": 5,                  # need this many strong keypoints, or it's rejected (statue filter)
     "low_light": True,            # CLAHE contrast boost so it sees you in a dim room
     "clahe_clip": 2.0,
 
