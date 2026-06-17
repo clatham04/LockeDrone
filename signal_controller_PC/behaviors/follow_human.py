@@ -36,8 +36,9 @@ RTSP = "rtsp://192.168.1.1:7070/webcam"
 PERSON_CLASS = 0
 CENTER = 128
 
-# COCO pose keypoint indices for the head
+# COCO pose keypoint indices
 NOSE, L_EYE, R_EYE, L_EAR, R_EAR = 0, 1, 2, 3, 4
+L_SHO, R_SHO = 5, 6
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -47,7 +48,9 @@ DEFAULTS = {
     "model": "yolo11m-pose.pt",
     "imgsz": 640,
     "conf": 0.20,                 # lower = detects in harder / low-light conditions
-    "kp_conf": 0.25,
+    "kp_conf": 0.25,              # min keypoint conf to USE a point for the head
+    "person_kp_conf": 0.5,        # keypoints this confident count toward "is it a real human"
+    "min_kp": 6,                  # need this many strong keypoints, or it's rejected (statue filter)
     "low_light": True,            # CLAHE contrast boost so it sees you in a dim room
     "clahe_clip": 2.0,
 
@@ -134,53 +137,64 @@ def _load_model():
     return YOLO(path), _cfg.get("imgsz", 640)
 
 
-def _head_from_person(res, i, x1, y1, x2, y2, fw, fh):
-    """Build raw head metrics for person i: prefer pose keypoints, fall back to the body box."""
-    kp = None
-    if res.keypoints is not None and res.keypoints.data is not None and len(res.keypoints.data) > i:
-        kp = res.keypoints.data[i].cpu().numpy()        # (17, 3): x, y, conf
+def _person_head(res, i, fw, fh):
+    """Head metrics for detection i IF it's a real human; otherwise None.
 
-    pts = {}
-    if kp is not None:
-        for idx in (NOSE, L_EYE, R_EYE, L_EAR, R_EAR):
-            x, y, c = kp[idx]
-            if c >= _cfg["kp_conf"]:
-                pts[idx] = (float(x), float(y))
+    The owl-statue fix: a real person has many confident pose keypoints; a statue/sign
+    mislabeled 'person' has only a few. So we require >= min_kp STRONG keypoints, then
+    locate the head from the FACE (nose/eyes/ears) when visible, or the SHOULDERS when you
+    face away. No more body-box fallback (that's what let it lock onto any box)."""
+    if res.keypoints is None or res.keypoints.data is None or len(res.keypoints.data) <= i:
+        return None
+    kp = res.keypoints.data[i].cpu().numpy()                  # (17, 3): x, y, conf
+    kc = _cfg["kp_conf"]
+    if int((kp[:, 2] >= _cfg["person_kp_conf"]).sum()) < _cfg["min_kp"]:
+        return None                                           # not a real human skeleton -> reject
 
-    if len(pts) >= 2:
-        xs = [p[0] for p in pts.values()]
-        ys = [p[1] for p in pts.values()]
+    face = {idx: (float(kp[idx][0]), float(kp[idx][1]))
+            for idx in (NOSE, L_EYE, R_EYE, L_EAR, R_EAR) if kp[idx][2] >= kc}
+    if len(face) >= 2:                                        # facing us -> use the face
+        xs = [p[0] for p in face.values()]
+        ys = [p[1] for p in face.values()]
         cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
-        if L_EAR in pts and R_EAR in pts:
-            hw = math.hypot(pts[L_EAR][0] - pts[R_EAR][0], pts[L_EAR][1] - pts[R_EAR][1])
-        elif L_EYE in pts and R_EYE in pts:
-            hw = math.hypot(pts[L_EYE][0] - pts[R_EYE][0], pts[L_EYE][1] - pts[R_EYE][1]) * 2.2
+        if L_EAR in face and R_EAR in face:
+            hw = math.hypot(face[L_EAR][0] - face[R_EAR][0], face[L_EAR][1] - face[R_EAR][1])
+        elif L_EYE in face and R_EYE in face:
+            hw = math.hypot(face[L_EYE][0] - face[R_EYE][0], face[L_EYE][1] - face[R_EYE][1]) * 2.2
         else:
             hw = max(max(xs) - min(xs), 1.0)
-        src = "head"
-    else:
-        cx, cy = (x1 + x2) / 2, y1 + (y2 - y1) * 0.10
-        hw = (x2 - x1) * _cfg["head_width_frac"]
+        src = "face"
+    elif kp[L_SHO][2] >= kc and kp[R_SHO][2] >= kc:           # turned away -> head above shoulders
+        sx = (kp[L_SHO][0] + kp[R_SHO][0]) / 2.0
+        sy = (kp[L_SHO][1] + kp[R_SHO][1]) / 2.0
+        sw = math.hypot(kp[L_SHO][0] - kp[R_SHO][0], kp[L_SHO][1] - kp[R_SHO][1])
+        cx, cy, hw = sx, sy - 0.6 * sw, 0.45 * sw
         src = "body"
+    else:
+        return None                                           # can't locate a head -> reject
 
-    return {"cx": cx / fw, "cy": cy / fh, "head_w_px": max(hw, 1.0),
-            "box": (x1 / fw, y1 / fh, x2 / fw, y2 / fh), "src": src, "ts": time.time()}
+    hw = max(hw, 1.0)
+    if hw < _cfg.get("min_head_px", 8):                       # too small -> too far / noise
+        return None
+    return {"cx": cx / fw, "cy": cy / fh, "head_w_px": hw, "src": src, "ts": time.time()}
 
 
 def _largest_person(res, fw, fh):
-    """Largest detected person -> raw head metrics, or None."""
+    """Largest REAL person (passes the human-skeleton filter) -> head metrics, or None."""
     boxes = res.boxes
     if boxes is None or boxes.xyxy is None or len(boxes) == 0:
         return None
     xyxy = boxes.xyxy.cpu().numpy()
-    areas = (xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])
-    i = int(areas.argmax())
-    x1, y1, x2, y2 = (float(v) for v in xyxy[i])
-    det = _head_from_person(res, i, x1, y1, x2, y2, fw, fh)
-    # reject if head is too small — either too far away or a false positive
-    if det["head_w_px"] < _cfg.get("min_head_px", 8):
-        return None
-    return det
+    order = sorted(range(len(xyxy)),
+                   key=lambda i: (xyxy[i, 2] - xyxy[i, 0]) * (xyxy[i, 3] - xyxy[i, 1]),
+                   reverse=True)
+    for i in order:                                           # largest first; first valid one wins
+        head = _person_head(res, i, fw, fh)
+        if head is not None:
+            x1, y1, x2, y2 = xyxy[i]
+            head["box"] = (x1 / fw, y1 / fh, x2 / fw, y2 / fh)
+            return head
+    return None
 
 
 def _update_track(track, det):

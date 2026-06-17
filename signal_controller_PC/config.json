@@ -17,6 +17,8 @@
       "imgsz": 640,
       "conf": 0.2,
       "kp_conf": 0.25,
+      "person_kp_conf": 0.5,
+      "min_kp": 6,
       "low_light": true,
       "clahe_clip": 2.0,
       "target_head_y": 0.25,

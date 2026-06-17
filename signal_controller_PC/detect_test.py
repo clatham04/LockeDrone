@@ -25,6 +25,7 @@ from drone_camera import DroneCamera
 RTSP = "rtsp://192.168.1.1:7070/webcam"
 PERSON_CLASS = 0
 NOSE, L_EYE, R_EYE, L_EAR, R_EAR = 0, 1, 2, 3, 4
+L_SHO, R_SHO = 5, 6
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -37,6 +38,9 @@ MODEL = CFG.get("model", "yolo11m-pose.pt")
 IMGSZ = CFG.get("imgsz", 640)
 CONF = CFG.get("conf", 0.20)
 KP_CONF = CFG.get("kp_conf", 0.25)
+PERSON_KP_CONF = CFG.get("person_kp_conf", 0.5)
+MIN_KP = CFG.get("min_kp", 6)
+MIN_HEAD_PX = CFG.get("min_head_px", 8)
 LOW_LIGHT = CFG.get("low_light", True)
 HEAD_WIDTH_FT = CFG.get("head_width_ft", 0.5)
 HFOV = CFG.get("camera_hfov_deg", 30.0)
@@ -62,24 +66,35 @@ def enhance(frame):
 
 
 def head_metrics(kp):
-    """From one person's keypoints -> (cx, cy, head_width_px) or None."""
-    pts = {}
-    for idx in (NOSE, L_EYE, R_EYE, L_EAR, R_EAR):
-        x, y, c = kp[idx]
-        if c >= KP_CONF:
-            pts[idx] = (float(x), float(y))
-    if len(pts) < 2:
-        return None
-    xs = [p[0] for p in pts.values()]
-    ys = [p[1] for p in pts.values()]
-    cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
-    if L_EAR in pts and R_EAR in pts:
-        hw = math.hypot(pts[L_EAR][0] - pts[R_EAR][0], pts[L_EAR][1] - pts[R_EAR][1])
-    elif L_EYE in pts and R_EYE in pts:
-        hw = math.hypot(pts[L_EYE][0] - pts[R_EYE][0], pts[L_EYE][1] - pts[R_EYE][1]) * 2.2
+    """Real-person head from keypoints -> (cx, cy, head_px) or None.
+
+    Same filter as follow_human: reject unless there are enough STRONG keypoints (a statue
+    won't have them), then head from the face, or the shoulders if turned away."""
+    if int((kp[:, 2] >= PERSON_KP_CONF).sum()) < MIN_KP:
+        return None                                          # not a real human skeleton
+    face = {idx: (float(kp[idx][0]), float(kp[idx][1]))
+            for idx in (NOSE, L_EYE, R_EYE, L_EAR, R_EAR) if kp[idx][2] >= KP_CONF}
+    if len(face) >= 2:
+        xs = [p[0] for p in face.values()]
+        ys = [p[1] for p in face.values()]
+        cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+        if L_EAR in face and R_EAR in face:
+            hw = math.hypot(face[L_EAR][0] - face[R_EAR][0], face[L_EAR][1] - face[R_EAR][1])
+        elif L_EYE in face and R_EYE in face:
+            hw = math.hypot(face[L_EYE][0] - face[R_EYE][0], face[L_EYE][1] - face[R_EYE][1]) * 2.2
+        else:
+            hw = max(max(xs) - min(xs), 1.0)
+    elif kp[L_SHO][2] >= KP_CONF and kp[R_SHO][2] >= KP_CONF:
+        sx = (kp[L_SHO][0] + kp[R_SHO][0]) / 2.0
+        sy = (kp[L_SHO][1] + kp[R_SHO][1]) / 2.0
+        sw = math.hypot(kp[L_SHO][0] - kp[R_SHO][0], kp[L_SHO][1] - kp[R_SHO][1])
+        cx, cy, hw = sx, sy - 0.6 * sw, 0.45 * sw
     else:
-        hw = max(max(xs) - min(xs), 1.0)
-    return cx, cy, max(hw, 1.0)
+        return None
+    hw = max(hw, 1.0)
+    if hw < MIN_HEAD_PX:
+        return None
+    return cx, cy, hw
 
 
 def distance_ft(head_px):
@@ -124,32 +139,38 @@ def main():
             proc = enhance(frame)
             res = model(proc, conf=CONF, classes=[PERSON_CLASS], imgsz=IMGSZ, verbose=False)[0]
 
-            # every detection (dim box) so false positives are visible; head on the largest
+            # dim box = every raw detection; RED head = the largest one that passes the
+            # human-skeleton filter (so rejected statues stay dim with NO head box).
             boxes = res.boxes.xyxy.cpu().numpy() if (res.boxes is not None and res.boxes.xyxy is not None) else []
+            kdata = res.keypoints.data.cpu().numpy() if (res.keypoints is not None and res.keypoints.data is not None) else None
             n = len(boxes)
-            big_i, big_a = -1, 0.0
-            for i, (x1, y1, x2, y2) in enumerate(boxes):
-                area = (x2 - x1) * (y2 - y1)
-                if area > big_a:
-                    big_a, big_i = area, i
+            order = sorted(range(n), key=lambda i: (boxes[i][2] - boxes[i][0]) * (boxes[i][3] - boxes[i][1]),
+                           reverse=True)
+            real = 0
+            chosen = None
+            for i in order:
+                x1, y1, x2, y2 = boxes[i]
                 cv2.rectangle(proc, (int(x1), int(y1)), (int(x2), int(y2)), (0, 150, 0), 1)
+                head = head_metrics(kdata[i]) if kdata is not None and i < len(kdata) else None
+                if head is not None:
+                    real += 1
+                    if chosen is None:
+                        chosen = head
 
-            if big_i >= 0 and res.keypoints is not None and res.keypoints.data is not None:
-                head = head_metrics(res.keypoints.data[big_i].cpu().numpy())
-                if head:
-                    hx, hy, hw = head
-                    cv2.rectangle(proc, (int(hx - hw / 2), int(hy - hw / 2)),
-                                  (int(hx + hw / 2), int(hy + hw * 0.7)), (0, 0, 255), 2)
-                    cv2.circle(proc, (int(hx), int(hy)), 3, (0, 0, 255), -1)
-                    d = distance_ft(hw)
-                    if d is not None:
-                        cv2.putText(proc, f"dist:{d:.1f}ft (target {TARGET_FT:.0f}ft)  head:{int(hw)}px",
-                                    (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+            if chosen is not None:
+                hx, hy, hw = chosen
+                cv2.rectangle(proc, (int(hx - hw / 2), int(hy - hw / 2)),
+                              (int(hx + hw / 2), int(hy + hw * 0.7)), (0, 0, 255), 2)
+                cv2.circle(proc, (int(hx), int(hy)), 3, (0, 0, 255), -1)
+                d = distance_ft(hw)
+                if d is not None:
+                    cv2.putText(proc, f"dist:{d:.1f}ft (target {TARGET_FT:.0f}ft)  head:{int(hw)}px",
+                                (8, fh - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
             now = time.time()
             fps = 0.9 * fps + 0.1 * (1.0 / max(now - t_prev, 1e-3))
             t_prev = now
-            cv2.putText(proc, f"people:{n}   {fps:4.1f} FPS   {dev}", (8, 24),
+            cv2.putText(proc, f"boxes:{n} real:{real}   {fps:4.1f} FPS   {dev}", (8, 24),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             cv2.imshow("Detect Test (q to quit)", proc)
             if cv2.waitKey(1) & 0xFF == ord("q"):
