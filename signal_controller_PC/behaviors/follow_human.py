@@ -73,7 +73,8 @@ DEFAULTS = {
     # --- tracking filter + prediction (alpha-beta) ---
     "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
     "beta": 0.05,                 # how hard each detection corrects VELOCITY (lower = smoother)
-    "hw_smooth": 0.15,            # was 0.3 — more aggressive EMA to reject noisy head-width spikes
+    "hw_smooth": 0.07,            # heavy EMA on head width -> stable distance (kills back-and-forth)
+    "dist_deadzone_ft": 2.0,      # hold position unless you're clearly off the target distance
     "predict_cap_s": 0.25,        # never extrapolate position further ahead than this
     "max_vel": 0.6,               # clamp head velocity (frac/s) so prediction CAN'T run away
     "lock_hits": 6,               # need this many detections in a row before we trust prediction
@@ -88,7 +89,7 @@ DEFAULTS = {
     "target_dist_ft": 11.0,
     "too_close_ft": 5.0,
     "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at full power)
-    "implausible_pitch_frac": 1.0, # fraction of max_pitch to use when dist reading is implausible
+    "implausible_pitch_frac": 0.5, # fraction of max_pitch when dist reading is implausible (no full lurch)
     "head_width_frac": 0.55,      # body-box fallback only
     "min_head_px": 8,             # reject detections where head is smaller than this (too far / noise)
 }
@@ -421,12 +422,16 @@ def controller(state):
     elif dist_ft < _cfg["too_close_ft"]:
         pitch_dev = -_cfg["max_pitch"]                  # too close -> full back-off
     elif dist_ft > max_credible:
-        # implausible reading (keypoint noise at range) — already far away and getting farther,
-        # chase at full pitch to close ground
-        pitch_dev = _cfg["max_pitch"]
+        # implausible reading (keypoint noise at range): nudge forward at the configured
+        # fraction, NOT full pitch — lurching at max_pitch on a noisy frame is what made it
+        # jerk back and forth.
+        pitch_dev = _cfg["max_pitch"] * implausible_frac
     else:
         ft_error = dist_ft - _cfg["target_dist_ft"]     # positive -> too far -> move forward
-        pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"], 0.5) * _cfg["pitch_sign"]
+        # wide dead-band: hold position unless you're clearly off the target distance, so
+        # head-width jitter doesn't make it creep back and forth while you stand still.
+        pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"],
+                           _cfg.get("dist_deadzone_ft", 2.0)) * _cfg["pitch_sign"]
 
     roll = CENTER
     pitch = _stick(pitch_dev, _cfg["max_pitch"])

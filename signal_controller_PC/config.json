@@ -37,7 +37,8 @@
       "throttle_sign": 1,
       "alpha": 0.4,
       "beta": 0.05,
-      "hw_smooth": 0.15,
+      "hw_smooth": 0.07,
+      "dist_deadzone_ft": 2.0,
       "predict_cap_s": 0.25,
       "max_vel": 0.6,
       "lock_hits": 6,
@@ -52,7 +53,7 @@
       "target_dist_ft": 15.0,
       "too_close_ft": 8.0,
       "max_credible_dist_ft": 25.0,
-      "implausible_pitch_frac": 1.0
+      "implausible_pitch_frac": 0.5
     }
   }
 }
