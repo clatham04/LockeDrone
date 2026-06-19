@@ -75,9 +75,11 @@ DEFAULTS = {
     "wind_assist": True,          # integral "trim" that builds up to cancel a STEADY wind
     "i_gain": 0.03,               # how fast the wind integral builds (bigger = faster, riskier)
     "i_clamp": 20,                # max push the integral can add per axis (anti-windup; keeps it safe)
-    "search_yaw": 38,             # yaw amount during a search burst (was 28 — faster rotation)
-    "search_step_s": 0.5,         # how long each yaw burst lasts (was 0.45)
-    "search_hold_s": 0.5,         # pause between bursts to settle + look (was 0.8 — less idle time)
+    "search_yaw": 55,             # yaw during a search burst — higher = turns faster to find people
+    "search_step_s": 0.6,         # how long each yaw burst lasts
+    "search_hold_s": 0.25,        # short pause between bursts (less idle = finds people faster)
+    "climb_seconds": 6.0,         # after takeoff, climb to flight height for this long (while searching)
+    "climb_throttle": 175,        # throttle while climbing (128 = hold, higher = climb faster)
 
     # --- tracking filter + prediction (alpha-beta) ---
     "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
@@ -116,6 +118,7 @@ _clahe = None    # low-light contrast booster (created lazily)
 _search_t = 0.0          # stepped-search phase timer
 _search_yawing = False   # True = yaw burst, False = pause-and-look
 _i = {"roll": 0.0, "pitch": 0.0, "thr": 0.0}   # wind-trim integrals per axis
+_flight_start = None     # set on the first control tick (right after takeoff)
 
 
 def _enhance(frame):
@@ -358,11 +361,12 @@ def _detect_loop():
 
 
 def start(state, config):
-    global _cfg, _cam, _model, _imgsz, _running, _track, _clahe, _search_t, _search_yawing
+    global _cfg, _cam, _model, _imgsz, _running, _track, _clahe, _search_t, _search_yawing, _flight_start
     _cfg = {**DEFAULTS, **config.get("tuning", {}).get("follow", {})}
     _track = None
     _clahe = None
     _search_t, _search_yawing = 0.0, False
+    _flight_start = None
     _i["roll"] = _i["pitch"] = _i["thr"] = 0.0
     _ensure_route()
     print("[FOLLOW] starting camera + detector...")
@@ -427,13 +431,21 @@ def _search_yaw_stick():
 
 def controller(state):
     """Steer toward the PREDICTED head position -> (roll, pitch, throttle, yaw)."""
+    global _flight_start
+    if _flight_start is None:
+        _flight_start = time.time()
+    # CLIMB to flight height during the first climb_seconds of flight — while STILL
+    # searching/following, so it can spot + lock onto someone on the way up.
+    climbing = (time.time() - _flight_start) < _cfg.get("climb_seconds", 0)
+    climb_thr = _cfg.get("climb_throttle", 175)
+
     with _lock:
         tr = _track
 
-    # Lost for too long -> HOVER in place and step-spin to search (no translation at all)
+    # Lost for too long -> climb (if still climbing) and step-spin to search.
     if tr is None or (time.time() - tr["ts"]) > _cfg["lost_s"]:
         _i["roll"] = _i["pitch"] = _i["thr"] = 0.0      # drop wind trims when we lose the person
-        return CENTER, CENTER, CENTER, _search_yaw_stick()
+        return CENTER, CENTER, (climb_thr if climbing else CENTER), _search_yaw_stick()
 
     cx, cy, age = _predicted_pos(tr)                    # where the head is NOW (predicted)
     locked = tr["hits"] >= _cfg["lock_hits"]
@@ -447,16 +459,18 @@ def controller(state):
     roll_p = _gated(cx - 0.5, _cfg["roll_gain"], dz)
     roll_dev = _pi("roll", roll_p, active) * _cfg["roll_sign"]
 
-    # THROTTLE / altitude. Default: HOLD a fixed height (throttle centered -> the drone's
-    # own height-hold keeps it there). Set the height with the takeoff climb. This stops the
-    # endless climb you got from chasing the head's frame position. Set hold_altitude=false
-    # to instead track head height (target_head_y).
-    if _cfg.get("hold_altitude", True):
+    # THROTTLE / altitude. Climb to height first; then HOLD a fixed height (throttle centered
+    # -> the drone's own height-hold keeps it there). This stops the endless climb you got
+    # from chasing the head's frame position. hold_altitude=false -> track head height instead.
+    if climbing:
         _i["thr"] *= 0.9
-        thr_dev = 0.0
+        throttle = climb_thr
+    elif _cfg.get("hold_altitude", True):
+        _i["thr"] *= 0.9
+        throttle = CENTER
     else:
         thr_p = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz)
-        thr_dev = _pi("thr", thr_p, active) * _cfg["throttle_sign"]
+        throttle = _stick(_pi("thr", thr_p, active) * _cfg["throttle_sign"], _cfg["max_throttle"])
 
     # PITCH (toward / away): only when actively locked; otherwise HOLD (bleed the trim).
     dist_ft = _distance_ft(tr["hw"])
@@ -486,7 +500,6 @@ def controller(state):
 
     roll = _stick(roll_dev, _cfg["max_roll"])
     pitch = _stick(pitch_dev, _cfg["max_pitch"])
-    throttle = _stick(thr_dev, _cfg["max_throttle"])
     yaw = _stick(yaw_dev, _cfg["max_yaw"])
 
     if not hasattr(controller, "_dbg"):
