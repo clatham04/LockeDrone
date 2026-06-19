@@ -75,11 +75,11 @@ DEFAULTS = {
     "wind_assist": True,          # integral "trim" that builds up to cancel a STEADY wind
     "i_gain": 0.03,               # how fast the wind integral builds (bigger = faster, riskier)
     "i_clamp": 20,                # max push the integral can add per axis (anti-windup; keeps it safe)
-    "search_yaw": 55,             # yaw during a search burst — higher = turns faster to find people
-    "search_step_s": 0.6,         # how long each yaw burst lasts
-    "search_hold_s": 0.25,        # short pause between bursts (less idle = finds people faster)
+    "search_yaw": 35,             # yaw during a search burst (smaller step = less blur, locks reliably)
+    "search_step_s": 0.4,         # short burst so it doesn't whip past people
+    "search_hold_s": 0.7,         # PAUSE to hold still and DETECT/LOCK (this is when it sees you)
     "climb_seconds": 6.0,         # after takeoff, climb to flight height for this long (while searching)
-    "climb_throttle": 175,        # throttle while climbing (128 = hold, higher = climb faster)
+    "climb_throttle": 160,        # gentle climb (128 = hold) so the rise doesn't blur detection
 
     # --- tracking filter + prediction (alpha-beta) ---
     "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
