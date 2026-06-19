@@ -66,9 +66,9 @@ DEFAULTS = {
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
-    "search_yaw": 28,             # yaw amount during a search burst (gentle = less drift)
-    "search_step_s": 0.45,        # how long each yaw burst lasts
-    "search_hold_s": 0.8,         # pause between bursts to settle + look (no movement)
+    "search_yaw": 38,             # yaw amount during a search burst (was 28 — faster rotation)
+    "search_step_s": 0.5,         # how long each yaw burst lasts (was 0.45)
+    "search_hold_s": 0.5,         # pause between bursts to settle + look (was 0.8 — less idle time)
 
     # --- tracking filter + prediction (alpha-beta) ---
     "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
@@ -78,16 +78,18 @@ DEFAULTS = {
     "predict_cap_s": 0.25,        # never extrapolate position further ahead than this
     "max_vel": 0.6,               # clamp head velocity (frac/s) so prediction CAN'T run away
     "lock_hits": 6,               # need this many detections in a row before we trust prediction
+    "prefer_hits": 3,             # need this many hits before sticky-tracking trusts the current track
+                                   # (prevents getting anchored to a bad point right after a reset)
     "fresh_s": 0.4,               # only move toward/away if a detection arrived within this (else hold)
     "lost_s": 1.8,                # was 1.2 — hold track longer before giving up + searching
-    "reset_dt_s": 0.35,           # was 0.5 — tighter gap tolerance to avoid velocity spikes
+    "reset_dt_s": 0.5,            # gap bigger than this -> re-init track (no velocity spike)
 
     # --- distance from HEAD width (pinhole camera model) ---
     "head_width_ft": 0.5,
     "camera_hfov_deg": 30.0,
     "frame_width_px": 640,
-    "target_dist_ft": 11.0,
-    "too_close_ft": 5.0,
+    "target_dist_ft": 15.0,
+    "too_close_ft": 8.0,
     "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at full power)
     "implausible_pitch_frac": 0.5, # fraction of max_pitch when dist reading is implausible (no full lurch)
     "head_width_frac": 0.55,      # body-box fallback only
@@ -317,7 +319,13 @@ def _detect_loop():
         proc = _enhance(frame)                          # brighten for low-light detection
         res = _model(proc, conf=conf, classes=[PERSON_CLASS], imgsz=_imgsz, verbose=False)[0]
         with _lock:
-            prefer = (_track["cx"], _track["cy"]) if _track is not None else None
+            # Only "stick" to the current track once it's a CONFIRMED lock (hits >= prefer_hits).
+            # Right after a reset (hits 1-2) the track might be noise, so don't let it anchor
+            # the search to a bad point — fall back to picking the largest valid person instead,
+            # which is much more likely to be you if you're nearby.
+            prefer = (_track["cx"], _track["cy"]) if (
+                _track is not None and _track["hits"] >= _cfg.get("prefer_hits", 3)
+            ) else None
         det = _largest_person(res, fw, fh, prefer)      # stick to the current target if we have one
         with _lock:
             if det is not None:
