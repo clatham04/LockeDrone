@@ -94,6 +94,10 @@ def calibrate(send, t):
 def takeoff(send, t):
     print("[CTRL] taking off...")
     _pulse(send, t.get("takeoff_pulse_seconds", 0.4), flags1=wc.F1_ONEKEY)
+    climb_s = t.get("takeoff_climb_seconds", 0)
+    if climb_s > 0:                                    # climb higher than the firmware's default
+        print(f"[CTRL] climbing to flight height ({climb_s}s)...")
+        _pulse(send, climb_s, throttle=t.get("takeoff_climb_throttle", 180))
     print("[CTRL] flying.")
 
 

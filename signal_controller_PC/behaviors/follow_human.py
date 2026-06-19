@@ -55,17 +55,25 @@ DEFAULTS = {
     "clahe_clip": 2.0,
 
     # --- control ---
-    "target_head_y": 0.45,        # head near frame center -> drone rises to HEAD height
+    "target_head_y": 0.60,        # head LOWER in frame -> drone flies HIGHER (above head level)
     "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
     "yaw_gain": 120.0,            # turn faster to keep you centered (helps locking)
     "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
     "throttle_gain": 150.0,
     "max_yaw": 60,                # turn faster so you don't drift out before it centers
     "max_pitch": 65,              # was 50 — more aggressive for outdoor use
-    "max_throttle": 40,           # more climb authority to reach head height
+    "max_throttle": 55,           # more climb authority to fly higher
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
+
+    # --- wind stabilization ---
+    "roll_gain": 70.0,            # strafe sideways to hold position against side-wind
+    "roll_sign": 1,               # flip to -1 if it strafes the WRONG way
+    "max_roll": 45,
+    "wind_assist": True,          # integral "trim" that builds up to cancel a STEADY wind
+    "i_gain": 0.03,               # how fast the wind integral builds (bigger = faster, riskier)
+    "i_clamp": 20,                # max push the integral can add per axis (anti-windup; keeps it safe)
     "search_yaw": 38,             # yaw amount during a search burst (was 28 — faster rotation)
     "search_step_s": 0.5,         # how long each yaw burst lasts (was 0.45)
     "search_hold_s": 0.5,         # pause between bursts to settle + look (was 0.8 — less idle time)
@@ -106,6 +114,7 @@ _track = None    # filtered head track: {cx, cy, vx, vy, hw, box, src, ts} or No
 _clahe = None    # low-light contrast booster (created lazily)
 _search_t = 0.0          # stepped-search phase timer
 _search_yawing = False   # True = yaw burst, False = pause-and-look
+_i = {"roll": 0.0, "pitch": 0.0, "thr": 0.0}   # wind-trim integrals per axis
 
 
 def _enhance(frame):
@@ -353,6 +362,7 @@ def start(state, config):
     _track = None
     _clahe = None
     _search_t, _search_yawing = 0.0, False
+    _i["roll"] = _i["pitch"] = _i["thr"] = 0.0
     _ensure_route()
     print("[FOLLOW] starting camera + detector...")
     _cam = DroneCamera(RTSP)
@@ -385,6 +395,22 @@ def _gated(error, gain, deadzone):
     return 0.0 if abs(error) < deadzone else gain * error
 
 
+def _pi(name, p_dev, active):
+    """Proportional output + a leaky, clamped INTEGRAL of it (wind trim). A steady wind
+    leaves a persistent correction (p_dev), which the integral accumulates into a sustained
+    push that cancels the wind; it leaks away once you're back on target. We integrate the
+    P OUTPUT (not the raw error), so the integral is always the SAME direction as P — it can
+    never flip a sign. i_clamp bounds it so a gust can't wind it up dangerously."""
+    if not _cfg.get("wind_assist", True):
+        return p_dev
+    if active:
+        acc = _i[name] * 0.99 + p_dev * _cfg["i_gain"]
+        _i[name] = max(-_cfg["i_clamp"], min(_cfg["i_clamp"], acc))
+    else:
+        _i[name] *= 0.9                                 # bleed off when not actively tracking
+    return p_dev + _i[name]
+
+
 def _search_yaw_stick():
     """Stepped search: a short yaw burst, then a pause to settle + look — repeat. A pause
     between bursts lets the optical-flow hold re-lock (so it spins in PLACE instead of
@@ -405,43 +431,52 @@ def controller(state):
 
     # Lost for too long -> HOVER in place and step-spin to search (no translation at all)
     if tr is None or (time.time() - tr["ts"]) > _cfg["lost_s"]:
+        _i["roll"] = _i["pitch"] = _i["thr"] = 0.0      # drop wind trims when we lose the person
         return CENTER, CENTER, CENTER, _search_yaw_stick()
 
     cx, cy, age = _predicted_pos(tr)                    # where the head is NOW (predicted)
     locked = tr["hits"] >= _cfg["lock_hits"]
+    active = locked and age < _cfg["fresh_s"]           # actively on someone -> let wind trim build
     dz = _cfg["deadzone"]
 
-    # YAW: center the (predicted) head left/right
+    # YAW: turn to face you (heading). No wind trim — wind doesn't cause steady yaw drift.
     yaw_dev = _gated(cx - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
 
-    # THROTTLE: keep the (predicted) head at the target height
-    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
+    # ROLL: strafe sideways to hold horizontal position against side-wind (P + wind trim).
+    roll_p = _gated(cx - 0.5, _cfg["roll_gain"], dz)
+    roll_dev = _pi("roll", roll_p, active) * _cfg["roll_sign"]
 
-    # PITCH (move toward / away): ONLY when locked AND freshly seen. Otherwise HOLD position
-    # so it never drives forward while searching or coasting through a detection gap.
+    # THROTTLE: hold the head at target height (P + wind trim for up/down gusts).
+    thr_p = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz)
+    thr_dev = _pi("thr", thr_p, active) * _cfg["throttle_sign"]
+
+    # PITCH (toward / away): only when actively locked; otherwise HOLD (bleed the trim).
     dist_ft = _distance_ft(tr["hw"])
     max_credible = _cfg.get("max_credible_dist_ft", 25.0)
     implausible_frac = _cfg.get("implausible_pitch_frac", 0.6)
 
-    if not (locked and age < _cfg["fresh_s"]):
+    if not active:
+        _i["pitch"] *= 0.9
         pitch_dev = 0.0                                 # not actively on someone -> stay put
     elif dist_ft is None:
+        _i["pitch"] *= 0.9
         pitch_dev = 0.0
     elif dist_ft < _cfg["too_close_ft"]:
+        _i["pitch"] *= 0.9
         pitch_dev = -_cfg["max_pitch"]                  # too close -> full back-off
     elif dist_ft > max_credible:
+        _i["pitch"] *= 0.9
         # implausible reading (keypoint noise at range): nudge forward at the configured
-        # fraction, NOT full pitch — lurching at max_pitch on a noisy frame is what made it
-        # jerk back and forth.
+        # fraction, NOT full pitch — lurching at max_pitch on a noisy frame jerks it around.
         pitch_dev = _cfg["max_pitch"] * implausible_frac
     else:
         ft_error = dist_ft - _cfg["target_dist_ft"]     # positive -> too far -> move forward
-        # wide dead-band: hold position unless you're clearly off the target distance, so
-        # head-width jitter doesn't make it creep back and forth while you stand still.
-        pitch_dev = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"],
-                           _cfg.get("dist_deadzone_ft", 2.0)) * _cfg["pitch_sign"]
+        # wide dead-band so head-width jitter doesn't creep it back and forth; + wind trim.
+        pitch_p = _gated(ft_error, _cfg["pitch_gain"] / _cfg["target_dist_ft"],
+                         _cfg.get("dist_deadzone_ft", 2.0))
+        pitch_dev = _pi("pitch", pitch_p, True) * _cfg["pitch_sign"]
 
-    roll = CENTER
+    roll = _stick(roll_dev, _cfg["max_roll"])
     pitch = _stick(pitch_dev, _cfg["max_pitch"])
     throttle = _stick(thr_dev, _cfg["max_throttle"])
     yaw = _stick(yaw_dev, _cfg["max_yaw"])
