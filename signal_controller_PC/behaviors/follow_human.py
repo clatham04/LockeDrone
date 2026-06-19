@@ -55,7 +55,8 @@ DEFAULTS = {
     "clahe_clip": 2.0,
 
     # --- control ---
-    "target_head_y": 0.60,        # head LOWER in frame -> drone flies HIGHER (above head level)
+    "hold_altitude": True,        # HOLD a fixed height (set by the takeoff climb) — no climbing
+    "target_head_y": 0.60,        # only used when hold_altitude=false (head-height mode)
     "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
     "yaw_gain": 120.0,            # turn faster to keep you centered (helps locking)
     "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
@@ -446,9 +447,16 @@ def controller(state):
     roll_p = _gated(cx - 0.5, _cfg["roll_gain"], dz)
     roll_dev = _pi("roll", roll_p, active) * _cfg["roll_sign"]
 
-    # THROTTLE: hold the head at target height (P + wind trim for up/down gusts).
-    thr_p = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz)
-    thr_dev = _pi("thr", thr_p, active) * _cfg["throttle_sign"]
+    # THROTTLE / altitude. Default: HOLD a fixed height (throttle centered -> the drone's
+    # own height-hold keeps it there). Set the height with the takeoff climb. This stops the
+    # endless climb you got from chasing the head's frame position. Set hold_altitude=false
+    # to instead track head height (target_head_y).
+    if _cfg.get("hold_altitude", True):
+        _i["thr"] *= 0.9
+        thr_dev = 0.0
+    else:
+        thr_p = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz)
+        thr_dev = _pi("thr", thr_p, active) * _cfg["throttle_sign"]
 
     # PITCH (toward / away): only when actively locked; otherwise HOLD (bleed the trim).
     dist_ft = _distance_ft(tr["hw"])

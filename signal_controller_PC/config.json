@@ -23,6 +23,7 @@
       "min_kp": 5,
       "low_light": true,
       "clahe_clip": 2.0,
+      "hold_altitude": true,
       "target_head_y": 0.6,
       "deadzone": 0.06,
       "max_yaw": 60,
