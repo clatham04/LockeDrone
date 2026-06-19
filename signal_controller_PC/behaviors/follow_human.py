@@ -55,8 +55,7 @@ DEFAULTS = {
     "clahe_clip": 2.0,
 
     # --- control ---
-    "hold_altitude": True,        # HOLD a fixed height (set by the takeoff climb) — no climbing
-    "target_head_y": 0.60,        # only used when hold_altitude=false (head-height mode)
+    "target_head_y": 0.5,         # follow target: head near center = drone level with your head
     "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
     "yaw_gain": 120.0,            # turn faster to keep you centered (helps locking)
     "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
@@ -75,10 +74,10 @@ DEFAULTS = {
     "wind_assist": True,          # integral "trim" that builds up to cancel a STEADY wind
     "i_gain": 0.03,               # how fast the wind integral builds (bigger = faster, riskier)
     "i_clamp": 20,                # max push the integral can add per axis (anti-windup; keeps it safe)
-    "search_yaw": 35,             # yaw during a search burst (smaller step = less blur, locks reliably)
+    "search_yaw": 25,             # SLOW yaw step (smaller = less blur, catches people reliably)
     "search_step_s": 0.4,         # short burst so it doesn't whip past people
-    "search_hold_s": 0.7,         # PAUSE to hold still and DETECT/LOCK (this is when it sees you)
-    "climb_seconds": 6.0,         # after takeoff, climb to flight height for this long (while searching)
+    "search_hold_s": 0.9,         # long PAUSE to hold still and DETECT/LOCK (this is when it sees you)
+    "climb_seconds": 6.0,         # fly HIGH first: climb for this long while searching for a person
     "climb_throttle": 160,        # gentle climb (128 = hold) so the rise doesn't blur detection
 
     # --- tracking filter + prediction (alpha-beta) ---
@@ -459,18 +458,12 @@ def controller(state):
     roll_p = _gated(cx - 0.5, _cfg["roll_gain"], dz)
     roll_dev = _pi("roll", roll_p, active) * _cfg["roll_sign"]
 
-    # THROTTLE / altitude. Climb to height first; then HOLD a fixed height (throttle centered
-    # -> the drone's own height-hold keeps it there). This stops the endless climb you got
-    # from chasing the head's frame position. hold_altitude=false -> track head height instead.
-    if climbing:
-        _i["thr"] *= 0.9
-        throttle = climb_thr
-    elif _cfg.get("hold_altitude", True):
-        _i["thr"] *= 0.9
-        throttle = CENTER
-    else:
-        thr_p = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz)
-        throttle = _stick(_pi("thr", thr_p, active) * _cfg["throttle_sign"], _cfg["max_throttle"])
+    # THROTTLE: we're following someone now -> track HEAD HEIGHT (descend from the high search
+    # altitude to be level with their head). P-only, no integral, so it can't wind up and
+    # climb away. The high search altitude is only used while LOOKING (the search branch above).
+    _i["thr"] *= 0.9
+    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
+    throttle = _stick(thr_dev, _cfg["max_throttle"])
 
     # PITCH (toward / away): only when actively locked; otherwise HOLD (bleed the trim).
     dist_ft = _distance_ft(tr["hw"])
