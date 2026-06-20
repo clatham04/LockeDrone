@@ -40,7 +40,7 @@ CONF = CFG.get("conf", 0.20)
 KP_CONF = CFG.get("kp_conf", 0.25)
 PERSON_KP_CONF = CFG.get("person_kp_conf", 0.5)
 MIN_KP = CFG.get("min_kp", 6)
-MIN_HEAD_PX = CFG.get("min_head_px", 8)
+MIN_HEAD_FRAC = CFG.get("min_head_frac", 0.012)
 LOW_LIGHT = CFG.get("low_light", True)
 HEAD_WIDTH_FT = CFG.get("head_width_ft", 0.5)
 HFOV = CFG.get("camera_hfov_deg", 30.0)
@@ -92,7 +92,7 @@ def head_metrics(kp):
     else:
         return None
     hw = max(hw, 1.0)
-    if hw < MIN_HEAD_PX:
+    if hw < MIN_HEAD_FRAC * FRAME_W:
         return None
     return cx, cy, hw
 
@@ -105,6 +105,7 @@ def distance_ft(head_px):
 
 
 def main():
+    global FRAME_W
     dev = "GPU (CUDA)" if torch.cuda.is_available() else "CPU"
     path = os.path.join(ROOT, MODEL)
     path = path if os.path.isfile(path) else MODEL
@@ -118,6 +119,8 @@ def main():
 
     print(f"[DET] opening {RTSP} ...")
     cam = DroneCamera(RTSP, debug=True)
+    FRAME_W = cam.w                                  # auto-adjust distance math to this camera's width
+    print(f"[DET] camera {cam.w}x{cam.h} — distance math auto-set to {cam.w}px wide")
     print("[DET] waiting for first frame...")
     t = time.time()
     while cam.read() is None:

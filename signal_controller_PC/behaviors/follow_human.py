@@ -101,15 +101,19 @@ DEFAULTS = {
     "reset_dt_s": 0.5,            # gap bigger than this -> re-init track (no velocity spike)
 
     # --- distance from HEAD width (pinhole camera model) ---
-    "head_width_ft": 0.5,
-    "camera_hfov_deg": 30.0,
-    "frame_width_px": 640,
+    # Resolution (frame_width_px) AUTO-adjusts to the camera at startup; head_width_ft is
+    # physical. camera_hfov_deg is the ONE per-LENS value that can't be read from the video
+    # — CALIBRATE it: stand a measured distance away, run detect_test, and tune this until the
+    # on-screen 'dist' matches reality. Then any camera follows at the right distance.
+    "head_width_ft": 0.5,         # avg adult head width (ft) — physical, not camera-dependent
+    "camera_hfov_deg": 30.0,      # << per-lens calibration (see above). Wider lens = bigger number.
+    "frame_width_px": 640,        # AUTO-set from the live camera at startup (this is only a fallback)
     "target_dist_ft": 24.0,       # follow FARTHER so you fill less of the (zoomed) frame
     "too_close_ft": 8.0,
     "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at full power)
     "implausible_pitch_frac": 0.5, # fraction of max_pitch when dist reading is implausible (no full lurch)
     "head_width_frac": 0.55,      # body-box fallback only
-    "min_head_px": 8,             # reject detections where head is smaller than this (too far / noise)
+    "min_head_frac": 0.012,       # reject heads smaller than this FRACTION of the frame (resolution-safe)
 }
 
 _cfg = dict(DEFAULTS)
@@ -195,7 +199,7 @@ def _person_head(res, i, fw, fh):
         return None                                           # can't locate a head -> reject
 
     hw = max(hw, 1.0)
-    if hw < _cfg.get("min_head_px", 8):                       # too small -> too far / noise
+    if hw < _cfg.get("min_head_frac", 0.012) * fw:           # too small (frac of frame) -> far/noise
         return None
     return {"cx": cx / fw, "cy": cy / fh, "head_w_px": hw, "src": src, "ts": time.time()}
 
@@ -386,6 +390,8 @@ def start(state, config):
     _ensure_route()
     print("[FOLLOW] starting camera + detector...")
     _cam = DroneCamera(RTSP)
+    _cfg["frame_width_px"] = _cam.w           # AUTO-adjust the distance math to this camera's resolution
+    print(f"[FOLLOW] camera {_cam.w}x{_cam.h} — distance math auto-set to {_cam.w}px wide")
     _model, _imgsz = _load_model()
     print(f"[FOLLOW] model ready @ {_imgsz}px — searching for a person...")
     print("[FOLLOW] spinning to search. Will lock on when someone comes into view.")

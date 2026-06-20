@@ -43,8 +43,24 @@ def ensure_route(url):
         )  # ignore errors — already exists is fine
 
 
+def probe_size(url, fallback=(DEFAULT_WIDTH, DEFAULT_HEIGHT)):
+    """Ask ffprobe for the stream's REAL WxH so swapping the camera 'just works' — the
+    resolution is read live instead of hard-coded."""
+    if not shutil.which("ffprobe"):
+        return fallback
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-rtsp_transport", "udp", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", url],
+            capture_output=True, text=True, timeout=12).stdout.strip()
+        w, h = (int(x) for x in out.split("x")[:2])
+        return w, h
+    except Exception:
+        return fallback
+
+
 class DroneCamera:
-    def __init__(self, url, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, debug=False):
+    def __init__(self, url, width=None, height=None, debug=False):
         if not shutil.which("ffmpeg"):
             raise RuntimeError(
                 "ffmpeg CLI not found. Download it from https://ffmpeg.org/download.html "
@@ -53,7 +69,8 @@ class DroneCamera:
         ensure_route(url)
         self.url = url
         self.debug = debug
-        self.w, self.h = width, height
+        # auto-detect resolution from the actual stream (falls back to the drone's default)
+        self.w, self.h = (width, height) if (width and height) else probe_size(url)
         print(f"[CAM] stream size: {self.w}x{self.h}")
         self.frame = None
         self.running = True
