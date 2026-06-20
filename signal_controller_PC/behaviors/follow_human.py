@@ -88,7 +88,7 @@ DEFAULTS = {
     "beta": 0.05,                 # how hard each detection corrects VELOCITY (lower = smoother)
     "hw_smooth": 0.07,            # heavy EMA on head width -> stable distance (kills back-and-forth)
     "dist_deadzone_ft": 2.0,      # hold position unless you're clearly off the target distance
-    "lead_s": 0.3,                # how far AHEAD to predict your motion (the lead / pre-prediction)
+    "lead_s": 0.4,                # how far AHEAD to predict your motion — bigger = turns to future sooner
     "vel_deadband": 0.12,         # ignore velocity below this when leading -> NO bounce when still
     "vhw_deadband_frac": 0.10,    # ignore head-width velocity below this (frac of head size) when still
     "predict_cap_s": 0.6,         # cap on how far ahead we ever extrapolate (anti-runaway)
@@ -482,20 +482,18 @@ def controller(state):
         _i["roll"] = _i["pitch"] = _i["thr"] = 0.0      # drop wind trims when we lose the person
         return CENTER, CENTER, (climb_thr if climbing else CENTER), _search_yaw_stick()
 
-    _px, _py, age = _predicted_pos(tr)                  # predicted pos (overlay + age only)
-    # CENTER on your ACTUAL head position, not the lead — so the correction just brings your
-    # face back to the middle of the screen instead of overshooting past it. (The forward
-    # lead for walking toward/away is separate, on the distance axis below.)
-    cx, cy = tr["cx"], tr["cy"]
+    pcx, _pcy, age = _predicted_pos(tr)                 # PREDICTED (lead) head position
+    cx, cy = tr["cx"], tr["cy"]                          # ACTUAL head position
     locked = tr["hits"] >= _cfg["lock_hits"]
     active = locked and age < _cfg["fresh_s"]           # actively on someone -> let wind trim build
     dz = _cfg["deadzone"]
 
-    # YAW: turn to face you (heading). Buffer zone + edge boost keeps your head off the sides.
-    yaw_dev = _center(cx - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
-
-    # ROLL: strafe sideways to hold horizontal position against side-wind (P + wind trim).
-    roll_p = _center(cx - 0.5, _cfg["roll_gain"], dz)
+    # YAW + ROLL aim at the PREDICTED (future) horizontal position -> the drone turns toward
+    # where you're HEADING, so your face stays centered even when you move fast (instead of
+    # lagging the actual position and losing you). The velocity dead-band zeroes the lead when
+    # you're still, so it won't bounce in place; the edge-boost still yanks it back near a edge.
+    yaw_dev = _center(pcx - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
+    roll_p = _center(pcx - 0.5, _cfg["roll_gain"], dz)
     roll_dev = _pi("roll", roll_p, active) * _cfg["roll_sign"]
 
     # THROTTLE: we're following someone now -> track HEAD HEIGHT (descend from the high search

@@ -52,7 +52,7 @@
       "beta": 0.05,
       "hw_smooth": 0.07,
       "dist_deadzone_ft": 2.0,
-      "lead_s": 0.3,
+      "lead_s": 0.4,
       "vel_deadband": 0.12,
       "vhw_deadband_frac": 0.1,
       "predict_cap_s": 0.6,
