@@ -29,6 +29,8 @@
       "max_pitch": 65,
       "max_throttle": 30,
       "vert_deadzone": 0.12,
+      "edge_at": 0.30,
+      "edge_boost": 2.2,
       "yaw_gain": 120.0,
       "throttle_gain": 90.0,
       "pitch_gain": 350.0,

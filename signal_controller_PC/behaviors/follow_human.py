@@ -61,6 +61,8 @@ DEFAULTS = {
     "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
     "throttle_gain": 90.0,        # gentle altitude tracking — avoid the up/down bounce
     "vert_deadzone": 0.12,        # WIDE vertical hold band: don't chase small head-y changes
+    "edge_at": 0.30,              # head past this far from centre = nearing the frame edge
+    "edge_boost": 2.2,            # gain multiplier at the edge — yank it back before it's lost
     "max_yaw": 60,                # turn faster so you don't drift out before it centers
     "max_pitch": 65,              # was 50 — more aggressive for outdoor use
     "max_throttle": 30,           # gentle follow-altitude steps (the climb uses climb_throttle)
@@ -406,6 +408,20 @@ def _gated(error, gain, deadzone):
     return 0.0 if abs(error) < deadzone else gain * error
 
 
+def _center(error, gain, deadzone):
+    """Center an axis with a BUFFER ZONE + soft wall. Hold inside the deadzone (small moves
+    are free, no chasing), proportional outside it, and RAMP the gain up as the head nears
+    the frame EDGE so it's pulled back hard before it slips off-screen and we lose lock."""
+    a = abs(error)
+    if a < deadzone:
+        return 0.0
+    edge_at = _cfg.get("edge_at", 0.30)               # |error| beyond this = nearing the edge
+    if a > edge_at:
+        frac = min((a - edge_at) / (0.5 - edge_at), 1.0)     # 0 at edge_at -> 1 at the frame edge
+        gain *= 1.0 + frac * (_cfg.get("edge_boost", 2.0) - 1.0)
+    return gain * error
+
+
 def _pi(name, p_dev, active):
     """Proportional output + a leaky, clamped INTEGRAL of it (wind trim). A steady wind
     leaves a persistent correction (p_dev), which the integral accumulates into a sustained
@@ -458,11 +474,11 @@ def controller(state):
     active = locked and age < _cfg["fresh_s"]           # actively on someone -> let wind trim build
     dz = _cfg["deadzone"]
 
-    # YAW: turn to face you (heading). No wind trim — wind doesn't cause steady yaw drift.
-    yaw_dev = _gated(cx - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
+    # YAW: turn to face you (heading). Buffer zone + edge boost keeps your head off the sides.
+    yaw_dev = _center(cx - 0.5, _cfg["yaw_gain"], dz) * _cfg["yaw_sign"]
 
     # ROLL: strafe sideways to hold horizontal position against side-wind (P + wind trim).
-    roll_p = _gated(cx - 0.5, _cfg["roll_gain"], dz)
+    roll_p = _center(cx - 0.5, _cfg["roll_gain"], dz)
     roll_dev = _pi("roll", roll_p, active) * _cfg["roll_sign"]
 
     # THROTTLE: we're following someone now -> track HEAD HEIGHT (descend from the high search
@@ -470,7 +486,7 @@ def controller(state):
     # climb away. The high search altitude is only used while LOOKING (the search branch above).
     _i["thr"] *= 0.9
     vdz = _cfg.get("vert_deadzone", 0.12)               # WIDE vertical dead-band: hold altitude
-    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], vdz) * _cfg["throttle_sign"]
+    thr_dev = -_center(cy - _cfg["target_head_y"], _cfg["throttle_gain"], vdz) * _cfg["throttle_sign"]
     throttle = _stick(thr_dev, _cfg["max_throttle"])    # unless your head is well off — no bounce
 
     # PITCH (toward / away): only when actively locked; otherwise HOLD (bleed the trim).
