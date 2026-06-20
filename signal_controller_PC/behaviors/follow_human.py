@@ -86,7 +86,8 @@ DEFAULTS = {
     "beta": 0.05,                 # how hard each detection corrects VELOCITY (lower = smoother)
     "hw_smooth": 0.07,            # heavy EMA on head width -> stable distance (kills back-and-forth)
     "dist_deadzone_ft": 2.0,      # hold position unless you're clearly off the target distance
-    "predict_cap_s": 0.25,        # never extrapolate position further ahead than this
+    "lead_s": 0.4,                # how far AHEAD to predict your motion (the lead / pre-prediction)
+    "predict_cap_s": 0.6,         # cap on how far ahead we ever extrapolate (anti-runaway)
     "max_vel": 0.6,               # clamp head velocity (frac/s) so prediction CAN'T run away
     "lock_hits": 6,               # need this many detections in a row before we trust prediction
     "prefer_hits": 3,             # need this many hits before sticky-tracking trusts the current track
@@ -227,7 +228,7 @@ def _update_track(track, det):
     (a stable lock), so the velocity garbage from the search spin never steers us.
     """
     fresh = {"cx": det["cx"], "cy": det["cy"], "vx": 0.0, "vy": 0.0, "hits": 1,
-             "hw": det["head_w_px"], "box": det["box"], "src": det["src"], "ts": det["ts"]}
+             "hw": det["head_w_px"], "vhw": 0.0, "box": det["box"], "src": det["src"], "ts": det["ts"]}
     if track is None:
         return fresh
     dt = det["ts"] - track["ts"]
@@ -238,13 +239,16 @@ def _update_track(track, det):
     # predict from the old state, then correct toward the measurement
     px, py = track["cx"] + track["vx"] * dt, track["cy"] + track["vy"] * dt
     rx, ry = det["cx"] - px, det["cy"] - py
+    new_hw = track["hw"] * (1 - _cfg["hw_smooth"]) + det["head_w_px"] * _cfg["hw_smooth"]
+    vhw = track.get("vhw", 0.0) * 0.7 + ((new_hw - track["hw"]) / dt) * 0.3   # head-width velocity (px/s)
     return {
         "cx": px + a * rx,
         "cy": py + a * ry,
         "vx": track["vx"] + (b / dt) * rx,
         "vy": track["vy"] + (b / dt) * ry,
         "hits": track["hits"] + 1,
-        "hw": track["hw"] * (1 - _cfg["hw_smooth"]) + det["head_w_px"] * _cfg["hw_smooth"],
+        "hw": new_hw,
+        "vhw": vhw,
         "box": det["box"], "src": det["src"], "ts": det["ts"],
     }
 
@@ -256,7 +260,9 @@ def _predicted_pos(track):
     age = max(time.time() - track["ts"], 0.0)
     if track["hits"] < _cfg["lock_hits"]:
         return track["cx"], track["cy"], age            # acquiring -> centre on the raw position
-    pdt = min(age, _cfg["predict_cap_s"])
+    # LEAD ahead of your motion (not just the tiny gap since the last detection), so it
+    # anticipates your walk instead of always chasing where you just were.
+    pdt = min(age + _cfg.get("lead_s", 0.4), _cfg["predict_cap_s"])
     vmax = _cfg["max_vel"]
     vx = max(-vmax, min(vmax, track["vx"]))
     vy = max(-vmax, min(vmax, track["vy"]))
@@ -468,7 +474,10 @@ def controller(state):
     throttle = _stick(thr_dev, _cfg["max_throttle"])    # unless your head is well off — no bounce
 
     # PITCH (toward / away): only when actively locked; otherwise HOLD (bleed the trim).
-    dist_ft = _distance_ft(tr["hw"])
+    # LEAD the distance: project the head size forward by your walking speed so it starts
+    # moving to meet you instead of waiting for you to be clearly far, then reacting late.
+    _lead = max(-0.4 * tr["hw"], min(0.4 * tr["hw"], tr.get("vhw", 0.0) * _cfg.get("lead_s", 0.4)))
+    dist_ft = _distance_ft(max(tr["hw"] + _lead, 1.0))
     max_credible = _cfg.get("max_credible_dist_ft", 25.0)
     implausible_frac = _cfg.get("implausible_pitch_frac", 0.6)
 
