@@ -476,7 +476,11 @@ def controller(state):
         _i["roll"] = _i["pitch"] = _i["thr"] = 0.0      # drop wind trims when we lose the person
         return CENTER, CENTER, (climb_thr if climbing else CENTER), _search_yaw_stick()
 
-    cx, cy, age = _predicted_pos(tr)                    # where the head is NOW (predicted)
+    _px, _py, age = _predicted_pos(tr)                  # predicted pos (overlay + age only)
+    # CENTER on your ACTUAL head position, not the lead — so the correction just brings your
+    # face back to the middle of the screen instead of overshooting past it. (The forward
+    # lead for walking toward/away is separate, on the distance axis below.)
+    cx, cy = tr["cx"], tr["cy"]
     locked = tr["hits"] >= _cfg["lock_hits"]
     active = locked and age < _cfg["fresh_s"]           # actively on someone -> let wind trim build
     dz = _cfg["deadzone"]
