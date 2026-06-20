@@ -59,10 +59,11 @@ DEFAULTS = {
     "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
     "yaw_gain": 120.0,            # turn faster to keep you centered (helps locking)
     "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
-    "throttle_gain": 150.0,
+    "throttle_gain": 90.0,        # gentle altitude tracking — avoid the up/down bounce
+    "vert_deadzone": 0.12,        # WIDE vertical hold band: don't chase small head-y changes
     "max_yaw": 60,                # turn faster so you don't drift out before it centers
     "max_pitch": 65,              # was 50 — more aggressive for outdoor use
-    "max_throttle": 55,           # more climb authority to fly higher
+    "max_throttle": 30,           # gentle follow-altitude steps (the climb uses climb_throttle)
     "yaw_sign": 1,
     "pitch_sign": 1,
     "throttle_sign": 1,
@@ -98,7 +99,7 @@ DEFAULTS = {
     "head_width_ft": 0.5,
     "camera_hfov_deg": 30.0,
     "frame_width_px": 640,
-    "target_dist_ft": 15.0,
+    "target_dist_ft": 20.0,       # follow FARTHER so you fill less of the (zoomed) frame
     "too_close_ft": 8.0,
     "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at full power)
     "implausible_pitch_frac": 0.5, # fraction of max_pitch when dist reading is implausible (no full lurch)
@@ -462,8 +463,9 @@ def controller(state):
     # altitude to be level with their head). P-only, no integral, so it can't wind up and
     # climb away. The high search altitude is only used while LOOKING (the search branch above).
     _i["thr"] *= 0.9
-    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], dz) * _cfg["throttle_sign"]
-    throttle = _stick(thr_dev, _cfg["max_throttle"])
+    vdz = _cfg.get("vert_deadzone", 0.12)               # WIDE vertical dead-band: hold altitude
+    thr_dev = -_gated(cy - _cfg["target_head_y"], _cfg["throttle_gain"], vdz) * _cfg["throttle_sign"]
+    throttle = _stick(thr_dev, _cfg["max_throttle"])    # unless your head is well off — no bounce
 
     # PITCH (toward / away): only when actively locked; otherwise HOLD (bleed the trim).
     dist_ft = _distance_ft(tr["hw"])
