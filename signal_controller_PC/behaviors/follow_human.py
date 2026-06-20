@@ -57,12 +57,12 @@ DEFAULTS = {
     # --- control ---
     "target_head_y": 0.5,         # follow target: head near center = drone level with your head
     "deadzone": 0.06,             # hold still inside this error (kills twitch when you're still)
-    "yaw_gain": 120.0,            # turn faster to keep you centered (helps locking)
+    "yaw_gain": 55.0,             # GENTLE turn — hard turns swing the zoomed camera and blur detection
     "pitch_gain": 350.0,          # was 280 — more aggressive for outdoor use
     "throttle_gain": 90.0,        # gentle altitude tracking — avoid the up/down bounce
     "vert_deadzone": 0.12,        # WIDE vertical hold band: don't chase small head-y changes
     "edge_at": 0.30,              # head past this far from centre = nearing the frame edge
-    "edge_boost": 2.2,            # gain multiplier at the edge — yank it back before it's lost
+    "edge_boost": 1.7,            # gain multiplier at the edge — yank it back before it's lost
     "max_yaw": 60,                # turn faster so you don't drift out before it centers
     "max_pitch": 65,              # was 50 — more aggressive for outdoor use
     "max_throttle": 30,           # gentle follow-altitude steps (the climb uses climb_throttle)
@@ -104,7 +104,7 @@ DEFAULTS = {
     "head_width_ft": 0.5,
     "camera_hfov_deg": 30.0,
     "frame_width_px": 640,
-    "target_dist_ft": 20.0,       # follow FARTHER so you fill less of the (zoomed) frame
+    "target_dist_ft": 24.0,       # follow FARTHER so you fill less of the (zoomed) frame
     "too_close_ft": 8.0,
     "max_credible_dist_ft": 25.0, # readings above this are treated as noise (drive forward at full power)
     "implausible_pitch_frac": 0.5, # fraction of max_pitch when dist reading is implausible (no full lurch)
