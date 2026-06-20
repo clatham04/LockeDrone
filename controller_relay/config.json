@@ -1,0 +1,21 @@
+{
+  "drone": {
+    "iface": "wlan0",
+    "ip": "192.168.1.1",
+    "control_port": 7099,
+    "rtsp_url": "rtsp://192.168.1.1:7070/webcam"
+  },
+  "desktop": {
+    "ip": "192.168.2.2",
+    "video_port": 5600
+  },
+  "command_listen_port": 5700,
+  "rates": {
+    "command_send_hz": 25,
+    "heartbeat_hz": 1
+  },
+  "failsafe": {
+    "timeout_s": 2.0,
+    "action": "hover"
+  }
+}
