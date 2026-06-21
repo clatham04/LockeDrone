@@ -60,7 +60,7 @@ def probe_size(url, fallback=(DEFAULT_WIDTH, DEFAULT_HEIGHT)):
 
 
 class DroneCamera:
-    def __init__(self, url, width=None, height=None, debug=False):
+    def __init__(self, url, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT, debug=False):
         if not shutil.which("ffmpeg"):
             raise RuntimeError(
                 "ffmpeg CLI not found. Download it from https://ffmpeg.org/download.html "
@@ -69,8 +69,10 @@ class DroneCamera:
         ensure_route(url)
         self.url = url
         self.debug = debug
-        # auto-detect resolution from the actual stream (falls back to the drone's default)
-        self.w, self.h = (width, height) if (width and height) else probe_size(url)
+        # Known drone resolution. NO startup ffprobe — it opens a SECOND connection to the
+        # drone's single-client RTSP and starves the real video feed (camera never opens). For
+        # a different camera, pass width/height explicitly instead of auto-probing.
+        self.w, self.h = width, height
         print(f"[CAM] stream size: {self.w}x{self.h}")
         self.frame = None
         self.running = True
