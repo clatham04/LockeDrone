@@ -101,15 +101,17 @@ def takeoff(send, t):
     print("[CTRL] flying.")
 
 
-def land(send):
-    print("\n[CTRL] landing — descending slowly, do not interrupt...")
+def land(send, t):
+    print("\n[CTRL] landing — gentle auto-descent, let it touch down (don't interrupt)...")
     try:
-        _pulse(send, 3.0, throttle=55)
-        _pulse(send, 1.0, throttle=50)
-        _pulse(send, 0.5, flags1=wc.F1_STOP)
+        # The drone's OWN one-key auto-land: a controlled, gentle descent that handles the
+        # touchdown + motor cut itself, from any height. Then just HOLD the link (centered
+        # sticks) while it comes down. No throttle-chop, no F1_STOP mid-air — that's what
+        # made it drop before.
+        _pulse(send, 0.3, flags1=wc.F1_ONEKEY)
+        _pulse(send, t.get("land_descend_s", 10.0))
     except KeyboardInterrupt:
-        print("[CTRL] force stopping motors...")
-        _pulse(send, 0.5, flags1=wc.F1_STOP)
+        pass                                          # never abort a landing mid-air
     print("[CTRL] landed.")
 
 
@@ -159,7 +161,7 @@ def main():
                 _pulse(send, 0.5, flags1=wc.F1_STOP)
                 break
             if _key_land:
-                land(send)
+                land(send, t)
                 break
             roll, pitch, throttle, yaw = behavior.controller(state)
             send(roll=roll, pitch=pitch, throttle=throttle, yaw=yaw)
@@ -169,7 +171,7 @@ def main():
                 print(f"  ...{name} {secs}s")
             time.sleep(PERIOD)
     except KeyboardInterrupt:
-        land(send)
+        land(send, t)
     finally:
         _keys_active = False
         keyboard.unhook_all()
