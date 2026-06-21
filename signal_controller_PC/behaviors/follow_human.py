@@ -85,7 +85,8 @@ DEFAULTS = {
 
     # --- tracking filter + prediction (alpha-beta) ---
     "alpha": 0.4,                 # how hard each detection corrects POSITION (0..1)
-    "beta": 0.05,                 # how hard each detection corrects VELOCITY (lower = smoother)
+    "beta": 0.15,                 # VELOCITY correction. Higher = velocity (and the lead) COLLAPSES
+                                  #   fast when you STOP, so it stops yawing the instant you do.
     "hw_smooth": 0.07,            # heavy EMA on head width -> stable distance (kills back-and-forth)
     "dist_deadzone_ft": 2.0,      # hold position unless you're clearly off the target distance
     "lead_s": 0.4,                # how far AHEAD to predict your motion — bigger = turns to future sooner
@@ -273,15 +274,15 @@ def _predicted_pos(track):
     pdt = min(age + _cfg.get("lead_s", 0.3), _cfg["predict_cap_s"])
     vmax = _cfg["max_vel"]
     vd = _cfg.get("vel_deadband", 0.12)
-    # only LEAD when you're actually MOVING. Tiny velocity is just detection jitter while you
-    # stand still — leading on it drifts the drone and bounces your face out of frame.
+    # LEAD only HORIZONTALLY, and only when you're actually MOVING. Tiny velocity is just
+    # detection jitter while you stand still. We do NOT predict vertically: people don't fly,
+    # and the drone's own up/down bounce makes the head LOOK like it jumps in frame -> a bogus
+    # "head flying up" lead. So vertical stays pinned to the ACTUAL head position. (The camera
+    # is tilted ~15 deg down, so vertical framing is geometry, not motion — never extrapolate it.)
     vx = track["vx"] if abs(track["vx"]) >= vd else 0.0
-    vy = track["vy"] if abs(track["vy"]) >= vd else 0.0
     vx = max(-vmax, min(vmax, vx))
-    vy = max(-vmax, min(vmax, vy))
     cx = min(1.0, max(0.0, track["cx"] + vx * pdt))
-    cy = min(1.0, max(0.0, track["cy"] + vy * pdt))
-    return cx, cy, age
+    return cx, track["cy"], age
 
 
 def _distance_ft(head_px):
