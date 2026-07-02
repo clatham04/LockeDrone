@@ -43,6 +43,6 @@
 
 | | |
 |---|---|
-| **Main Build** | ~$313.16 |
+| **Main Build** | ~$295.16 |
 | **Pixhawk Kit** | $212.00 |
 | **Grand Total (both)** | **~$525.16** |
