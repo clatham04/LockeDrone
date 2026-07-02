@@ -314,11 +314,23 @@ def _draw_overlay(frame, track):
     cv2.rectangle(frame, (int(bx1 * fw), int(by1 * fh)), (int(bx2 * fw), int(by2 * fh)),
                   (0, 150, 0), 1)                       # body box (dim)
 
-    hx, hy = int(pcx * fw), int(pcy * fh)               # predicted head position
     hw = int(track["hw"])
-    color = (0, 200, 255) if predicting else (0, 0, 255)
-    cv2.rectangle(frame, (hx - hw // 2, hy - hw // 2), (hx + hw // 2, hy + int(hw * 0.7)), color, 2)
-    cv2.circle(frame, (hx, hy), 3, color, -1)
+
+    # CURRENT head (where you ARE now) — green box. This is what the throttle/distance track.
+    cx_px, cy_px = int(track["cx"] * fw), int(track["cy"] * fh)
+    cv2.rectangle(frame, (cx_px - hw // 2, cy_px - hw // 2),
+                  (cx_px + hw // 2, cy_px + int(hw * 0.7)), (0, 220, 0), 2)
+    cv2.circle(frame, (cx_px, cy_px), 3, (0, 220, 0), -1)
+
+    # LEAD / aim point (where it's STEERING toward) — orange box, only while predicting. Leads
+    # horizontally only, so it sits at the same height as the green box. When you stop, it snaps
+    # onto green ("future meets current"); when you move sideways it rides ahead.
+    hx, hy = int(pcx * fw), int(pcy * fh)
+    if predicting and abs(hx - cx_px) > 2:
+        cv2.line(frame, (cx_px, cy_px), (hx, hy), (0, 200, 255), 1)
+        cv2.rectangle(frame, (hx - hw // 2, hy - hw // 2),
+                      (hx + hw // 2, hy + int(hw * 0.7)), (0, 200, 255), 2)
+        cv2.circle(frame, (hx, hy), 3, (0, 200, 255), -1)
 
     ty = int(_cfg["target_head_y"] * fh)
     cv2.line(frame, (0, ty), (fw, ty), (0, 255, 255), 1)

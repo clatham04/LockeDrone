@@ -1,0 +1,22 @@
+[Unit]
+Description=LockeDrone Pi relay (drone <-> desktop video + commands + failsafe)
+# Wait for networking so wlan0 (drone) and eth0 (home LAN) are up before we bind to them.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# --- ADJUST this path to wherever you cloned the repo on the Pi ---
+WorkingDirectory=/home/pi/LockeDrone/controller_relay
+ExecStart=/usr/bin/python3 /home/pi/LockeDrone/controller_relay/relay.py
+# root: SO_BINDTODEVICE on wlan0 needs it (a system service already runs as root).
+User=root
+# If the drone wifi blips or the pipeline dies, come right back up.
+Restart=always
+RestartSec=2
+# Logs go to the journal: `journalctl -u lockedrone-relay -f`
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
