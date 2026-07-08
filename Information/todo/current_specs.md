@@ -8,13 +8,11 @@
 | 4 | **Night Vision Camera (Pi CSI)** | IR camera module for Pi 4B, day/night auto-switching | Already owned |
 | 5 | **MATEK F405 Wing V2 FC** | Flight controller with ICM42688P IMU and DPS310 barometer, ArduPilot/INAV compatible | $87.99 |
 | 6 | **A2212 1000KV Motor Kit (4-pack)** | Includes 4x brushless motors, 4x 30A ESCs, and 1045 CW/CCW propellers | $64.29 |
-| 7 | **FPV GPS Module w/ QMC5883L Compass** | Dual protocol 10th gen chip, fast satellite positioning, I2C compass — compatible with Matek F405 via UART3 + I2C | $18.99 |
 | 8 | **Zeee 3S 3300mAh 50C LiPo (2-pack)** | 11.1V XT60 battery for motors, ESCs, and FC — 50C discharge rating gives plenty of headroom | $45.89 |
-| 9 | **YoungRC 915MHz 100mW Telemetry Kit** | Air + ground MAVLink radio modules — connects Matek F405 to Alienware PC wirelessly via Mission Planner | $68.00 |
 | 10 | **Power Module XT60** *(still needed)* | Steps LiPo voltage to 5V for Matek FC, XT60 input to 6-pin output | ~$10.00 |
 
 
-**Main Build Total: ~$295.16**
+**Main Build Total: ~$208.17**
 
 ---
 
@@ -43,6 +41,5 @@
 
 | | |
 |---|---|
-| **Main Build** | ~$295.16 |
-| **Pixhawk Kit** | $212.00 |
-| **Grand Total (both)** | **~$525.16** |
+| **Main Build** | ~$208.17 |
+| **Pixhawk Kit** | $212.00 | 
