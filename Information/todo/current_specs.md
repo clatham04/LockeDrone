@@ -10,9 +10,9 @@
 | 6 | **A2212 1000KV Motor Kit (4-pack)** | Includes 4x brushless motors, 4x 30A ESCs, and 1045 CW/CCW propellers | $64.29 |
 | 8 | **Zeee 3S 3300mAh 50C LiPo (2-pack)** | 11.1V XT60 battery for motors, ESCs, and FC — 50C discharge rating gives plenty of headroom | $45.89 |
 | 10 | **Power Module XT60** *(still needed)* | Steps LiPo voltage to 5V for Matek FC, XT60 input to 6-pin output | ~$10.00 |
+| 11 | **FW 10 GPS Module** | tracking and satellite positioning | $18.99 |
 
-
-**Main Build Total: ~$208.17**
+**Main Build Total: ~$227.16**
 
 ---
 
