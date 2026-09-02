@@ -7,7 +7,7 @@ Launches the full drone program with follow_human as the active behavior:
   - Takes off and starts flying
   - Spins slowly to search for a person
   - Locks on and follows them at ~target_dist_ft (see config.json)
-  - Q = gentle land   |   SPACE = emergency stop   |   Ctrl+C = gentle land
+  - Q = gentle land   |   SPACE = emergency stop   |   Ctrl+C = gentle land oi
 
     python run.py
 """
@@ -25,7 +25,7 @@ def patch_config():
         cfg = json.load(f)
     cfg["active_behavior"] = "follow_human"
     with open(config_path, "w") as f:
-        json.dump(cfg, f, indent=2)
+        json.dump(cfg, f, indent=2) 
 
 
 if __name__ == "__main__":
